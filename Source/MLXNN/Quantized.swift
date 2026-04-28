@@ -212,8 +212,8 @@ open class QuantizedEmbedding: Embedding, Quantized {
 
     open override func asLinear(_ x: MLXArray) -> MLXArray {
         quantizedMM(
-            x, weight, scales: scales, biases: biases, transpose: true, groupSize: groupSize,
-            bits: bits, mode: mode)
+            x, weight, scales: scales, biases: mode == .affine ? biases : nil,
+            transpose: true, groupSize: groupSize, bits: bits, mode: mode)
     }
 }
 
@@ -334,11 +334,13 @@ open class QuantizedLinear: Linear, Quantized {
     }
 
     open override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        // mxfp4/nvfp4/mxfp8 modes don't support quantization biases; guard against
+        // stale biases that may have been saved in model weights during conversion.
         var x = quantizedMM(
             x,
             weight,
             scales: scales,
-            biases: biases,
+            biases: mode == .affine ? biases : nil,
             transpose: true,
             groupSize: groupSize,
             bits: bits,
