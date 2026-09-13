@@ -46,6 +46,18 @@ The ``MLX`` Swift package can be built and run from Xcode or SwiftPM. A CMake in
 
 More details are in the [documentation](https://swiftpackageindex.com/ml-explore/mlx-swift/main/documentation/mlx/install).
 
+### Fork compatibility
+
+This fork's September 14, 2026 upstream sync requires Swift 6.3 or newer with
+experimental C generation support (`experimentalCGen`). It was validated with
+Xcode 26.6 / Swift 6.3.3.
+
+`Stream()` creates an independently owned wrapper for the current task-scoped
+stream, falling back to the default stream on the default device. It retains
+the same evaluation stream, so synchronization waits for work queued there.
+Use `Stream(device)` to create a new evaluation stream;
+`StreamOrDevice.stream(stream)` preserves the supplied stream.
+
 ### Xcode (1)
 
 In Xcode you can add `https://github.com/ml-explore/mlx-swift.git` as a package

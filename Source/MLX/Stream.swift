@@ -52,7 +52,7 @@ public struct StreamOrDevice: Sendable, CustomStringConvertible, Equatable {
     public static let gpu = device(.gpu)
 
     public static func stream(_ stream: Stream) -> StreamOrDevice {
-        StreamOrDevice(Device.defaultStream())
+        StreamOrDevice(stream)
     }
 
     /// Internal context -- used with Cmlx calls.
@@ -83,8 +83,23 @@ public final class Stream: @unchecked Sendable, Equatable {
 
     let ctx: mlx_stream
 
-    public static let gpu = Stream(mlx_default_gpu_stream_new())
-    public static let cpu = Stream(mlx_default_cpu_stream_new())
+    private static func newStreamThreadUnsafe(_ deviceType: DeviceType) -> mlx_stream {
+        var cDeviceType: mlx_device_type
+        switch deviceType {
+        case DeviceType.cpu:
+            cDeviceType = MLX_CPU
+        case DeviceType.gpu:
+            cDeviceType = MLX_GPU
+        }
+        return evalLock.withLock {
+            let ctx = mlx_device_new_type(cDeviceType, 0)
+            defer { mlx_device_free(ctx) }
+            return mlx_stream_new_thread_unsafe(ctx)
+        }
+    }
+
+    public static let gpu = Stream(newStreamThreadUnsafe(.gpu))
+    public static let cpu = Stream(newStreamThreadUnsafe(.cpu))
 
     @TaskLocal static var defaultStream: Stream?
 
@@ -108,18 +123,22 @@ public final class Stream: @unchecked Sendable, Equatable {
         self.ctx = ctx
     }
 
-    /// Default stream on the default device.
+    /// Current task-scoped stream, or the default stream on the default device.
     public init() {
-        let device = Device.defaultDevice()
-        var ctx = mlx_stream_new()
-        mlx_get_default_stream(&ctx, device.ctx)
-        self.ctx = ctx
+        let stream = StreamOrDevice.default.stream
+        self.ctx = withEvalLock {
+            // Copy the C handle, not the evaluation stream. Each Swift wrapper owns
+            // its handle while synchronization still targets the queued work.
+            var ctx = mlx_stream_new()
+            mlx_stream_set(&ctx, stream.ctx)
+            return ctx
+        }
     }
 
     @available(*, deprecated, message: "use init(Device) -- index not supported")
     public init(index: Int32, _ device: Device) {
         self.ctx = evalLock.withLock {
-            mlx_stream_new_device(device.ctx)
+            mlx_stream_new_thread_unsafe(device.ctx)
         }
     }
 
@@ -128,19 +147,19 @@ public final class Stream: @unchecked Sendable, Equatable {
     /// See also ``withNewDefaultStream(device:_:)-5bwc3``
     public init(_ device: Device) {
         self.ctx = evalLock.withLock {
-            mlx_stream_new_device(device.ctx)
+            mlx_stream_new_thread_unsafe(device.ctx)
         }
     }
 
     deinit {
-        _ = evalLock.withLock {
+        _ = withEvalLock {
             mlx_stream_free(ctx)
         }
     }
 
     /// Synchronize with the given stream
     public func synchronize() {
-        _ = evalLock.withLock {
+        _ = withEvalLock {
             mlx_synchronize(ctx)
         }
     }
@@ -162,7 +181,7 @@ extension Stream: CustomStringConvertible {
     public var description: String {
         var s = mlx_string_new()
         defer { mlx_string_free(s) }
-        _ = evalLock.withLock {
+        _ = withEvalLock {
             mlx_stream_tostring(&s, ctx)
         }
         return String(cString: mlx_string_data(s), encoding: .utf8)!

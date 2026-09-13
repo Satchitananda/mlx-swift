@@ -30,7 +30,7 @@ endif()
 FetchContent_Declare(
   mlx-c
   GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
-  GIT_TAG "v0.6.0")
+  GIT_TAG "c74db5307cc8ce122f48d97ef951b30578674e7f")
 FetchContent_MakeAvailable(mlx-c)
 
 # swift-numerics
@@ -62,6 +62,10 @@ file(GLOB MLX-src ${CMAKE_CURRENT_LIST_DIR}/Source/MLX/*.swift)
 if(NOT MLX_BUILD_METAL)
   list(REMOVE_ITEM MLX-src ${CMAKE_CURRENT_LIST_DIR}/Source/MLX/GPU+Metal.swift
        ${CMAKE_CURRENT_LIST_DIR}/Source/MLX/MLXArray+Metal.swift)
+endif()
+
+if(NOT MLX_BUILD_CUDA)
+  list(REMOVE_ITEM MLX-src ${CMAKE_CURRENT_LIST_DIR}/Source/MLX/GPU+CUDA.swift)
 endif()
 
 add_library(MLX STATIC ${MLX-src})
