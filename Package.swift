@@ -248,10 +248,8 @@ let cmlx = Target.target(
         // vendor docs
         "vendor-README.md",
 
-        // example code + mlx-c distributed
+        // example code
         "mlx-c/examples",
-        "mlx-c/mlx/c/distributed.cpp",
-        "mlx-c/mlx/c/distributed_group.cpp",
 
         // vendored library, include header only
         "json",
@@ -283,6 +281,7 @@ let cmlx = Target.target(
         "mlx/python",
         "mlx/setup.py",
         "mlx/tests",
+        "mlx/build",
 
         // build variants (we are opting _out_ of these)
         "mlx/mlx/io/no_safetensors.cpp",
@@ -293,9 +292,9 @@ let cmlx = Target.target(
         "mlx/mlx/backend/metal/kernels",
         "mlx/mlx/backend/metal/nojit_kernels.cpp",
 
-        // do not build distributed support (yet)
+        // distributed backends: enable ring, disable MPI + NCCL + JACCL
         "mlx/mlx/distributed/mpi/mpi.cpp",
-        "mlx/mlx/distributed/ring/ring.cpp",
+        "mlx/mlx/distributed/ring/no_ring.cpp",
         "mlx/mlx/distributed/nccl/nccl.cpp",
         "mlx/mlx/distributed/jaccl/jaccl.cpp",
         "mlx/mlx/distributed/jaccl/lib",
@@ -348,9 +347,16 @@ let package = Package(
         ),
 
         .target(
+            name: "cLogSupport",
+            path: "Source/cLogSupport",
+            publicHeadersPath: "include"
+        ),
+
+        .target(
             name: "MLX",
             dependencies: [
                 "Cmlx",
+                "cLogSupport",
                 .product(name: "Numerics", package: "swift-numerics"),
             ],
             exclude: mlxSwiftExcludes,
@@ -403,6 +409,12 @@ let package = Package(
 
         .testTarget(
             name: "MLXTests",
+            dependencies: [
+                "MLX", "MLXNN", "MLXOptimizers",
+            ]
+        ),
+        .testTarget(
+            name: "MLXIntegrationTests",
             dependencies: [
                 "MLX", "MLXNN", "MLXOptimizers",
             ]
