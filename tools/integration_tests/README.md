@@ -307,17 +307,17 @@ target:
   Xcode, `xcrun xctest`).
 - `generate.py` sets `MLX_ENABLE_TF32=0` before importing mlx and records the value
   plus the device in each generated file header.
-- The environment also sets it, as a belt: `xcode/MLX.xctestplan`,
-  `.github/scripts/run-xcode-tests.sh` and the SwiftPM CI step (which runs the new
-  bundle too).
+- Set `MLX_ENABLE_TF32=0` in the launch environment when invoking tests directly
+  as an additional safeguard. The retained CI runners do not currently invoke
+  the integration test bundle.
 
 If the `setenv` somehow fails, every case fails with an explanatory message rather
 than looking like a numerical regression.
 
-Note `xcode/MLX.xcodeproj` needs its own `MLXIntegrationTests` target for these to
-run from Xcode (the `MLXTests` synchronized folder group no longer covers them, since
-they moved out of `Tests/MLXTests`).  Until then the test plan's environment variable
-is what protects the Xcode path.
+`xcode/MLX.xcodeproj` has its own `MLXIntegrationTests` target, and
+`xcode/MLX.xctestplan` includes it. The retained
+`.github/scripts/run-xcode-tests.sh` runner invokes only `MLXTests.xctest`.
+The integration helper sets the precision variable before its first MLX call.
 
 To test the TF32 path deliberately, regenerate with `--enable-tf32` on hardware that
 has it -- but then the values only reproduce there, so it is not what is checked in.
@@ -396,12 +396,12 @@ and exits before generating.
 - Not covered here because they do not fit "one array in, one array out":
   `divmod`, `split`, `unstack`, `meshgrid`, `qr`, `svd`, `lu`, `lu_factor`,
   `eig`, `eigh`, `slogdet` (multi-value), `segmented_mm` (segment semantics need
-  a closer look), `qqmm` (needs nvfp4 quantized inputs), transforms, modules and
-  optimizers.
+  a closer look), `qqmm` (needs nvfp4 quantized inputs), transforms and modules
+  with multiple outputs.
 - The `--self-test` numpy backend does not implement every op (`softmax`,
   `logsumexp`, `cummax`, `topk`, `quantize`, `nn.*`, ...); those cases are
   reported as `skipped`.  Use `--syntax-only` to check *all* cases emit valid
   Swift -- it skips python entirely and emits placeholder values.
-- Tests run with `Device.setDefault(device: .gpu)`; python defaults to the GPU
+- Tests run within `Device.withDefaultDevice(.gpu)`; python defaults to the GPU
   on macOS too.  If a case needs the CPU, put `stream=mx.cpu` / `stream: .cpu`
   in both expressions.

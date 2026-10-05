@@ -4,7 +4,7 @@ Controlling where your computations are evaluated.
 
 ## Specifying the Stream
 
-All operations, including random number generation, take an optional `stream:`
+Array operations, including random number generation, take an optional `stream:`
 argument. It defaults to ``Stream/defaultStream`` -- the default stream of the
 default device.
 
@@ -25,8 +25,8 @@ device, which the scopes below control.
 ## Scoping the Default Device
 
 To avoid passing `stream:` to every call, change the default device for a
-scope. ``Device/withDefaultDevice(_:_:)-17vjl`` does this without creating any
-new streams:
+scope. The following ``Device/withDefaultDevice(_:_:)-17vjl`` call reuses the
+current CPU stream:
 
 ```swift
 Device.withDefaultDevice(.cpu) {

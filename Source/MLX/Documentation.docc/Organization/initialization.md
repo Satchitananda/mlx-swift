@@ -255,10 +255,10 @@ there are specific initializers to request it:
 ### MLXArray Factory Methods
 
 - ``MLXArray/zeros(_:type:stream:)``
-- ``MLXArray/zeros(like:stream:)``
+- ``MLXArray/zeros(like:dtype:stream:)``
 - ``MLXArray/zeros(_:dtype:stream:)``
 - ``MLXArray/ones(_:type:stream:)``
-- ``MLXArray/ones(like:stream:)``
+- ``MLXArray/ones(like:dtype:stream:)``
 - ``MLXArray/ones(_:dtype:stream:)``
 - ``MLXArray/eye(_:m:k:type:stream:)``
 - ``MLXArray/full(_:values:type:stream:)``

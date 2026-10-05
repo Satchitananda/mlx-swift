@@ -195,6 +195,10 @@ on contributing to MLX. See the
 [docs](https://swiftpackageindex.com/ml-explore/mlx-swift/main/documentation/mlx/install) for more
 information on building from source, and running tests.
 
+For maintainer workflows, see [MAINTENANCE.md](MAINTENANCE.md) and the
+[integration test generator guide](tools/integration_tests/README.md).
+For skill installation, see [skills/README.md](skills/README.md).
+
 We are grateful for all of [our
 contributors](ACKNOWLEDGMENTS.md#Individual-Contributors). If you contribute
 to MLX Swift and wish to be acknowledged, please add your name to the list in your

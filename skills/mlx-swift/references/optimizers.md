@@ -177,7 +177,8 @@ let optimizer = Adamax(
 
 ## Learning Rate Scheduling
 
-MLX doesn't have built-in schedulers, but you can adjust learning rates directly:
+MLXOptimizers includes schedule functions such as `cosineDecay` and
+`exponentialDecay`. You can also adjust learning rates directly:
 
 ```swift
 var optimizer = Adam(learningRate: 0.001)

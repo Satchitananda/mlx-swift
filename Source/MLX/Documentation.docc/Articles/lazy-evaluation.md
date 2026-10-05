@@ -21,9 +21,8 @@ Lazy evaluation lets us record a compute graph without actually doing any
 computations. This is useful for function transformations like `grad` and
 `vmap` and graph optimizations like `simplify`.
 
-Currently, MLX does not compile and rerun compute graphs. They are all
-generated dynamically. However, lazy evaluation makes it much easier to
-integrate compilation for future performance enhancements.
+By default, MLX generates compute graphs dynamically. Use <doc:compilation>
+to compile and reuse eligible computations.
 
 ### Only Compute What You Use
 
