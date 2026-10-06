@@ -627,7 +627,8 @@ open class QuantizedShardedToAllLinear: QuantizedLinear {
         // this cannot call super: the bias applies to the summed result, not to
         // this process' partial product
         var x = quantizedMM(
-            x, weight, scales: scales, biases: biases, transpose: true, groupSize: groupSize,
+            x, weight, scales: scales, biases: mode == .affine ? biases : nil, transpose: true,
+            groupSize: groupSize,
             bits: bits, mode: mode)
         x = applyNVFP4GlobalScale(x, globalScale: globalScale)
         x = MLXDistributed.allSum(x, group: group)

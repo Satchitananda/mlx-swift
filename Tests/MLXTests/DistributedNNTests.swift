@@ -598,8 +598,39 @@ class DistributedNNTests: XCTestCase {
             "The multi process run covers this; see DistributedNNRingTests.")
     }
 
+    // Value: protects=loaded quantized layers preserve bias semantics when sharded;
+    // fails_when=sharded MXFP8 forwards stale biases or affine drops nonzero biases;
+    // why_new=the existing MXFP8 case has no stored biases; seam=none
     func testShardLinear() throws {
-        try shardLinearBody(world: try MLXDistributed.initialize())
+        let world = try MLXDistributed.initialize()
+        try shardLinearBody(world: world)
+
+        let input = MLXArray.ones([1, 32])
+        for mode: QuantizationMode in [.affine, .mxfp8] {
+            let loaded = QuantizedLinear(
+                weight: MLXArray.zeros([4, 8], dtype: .uint32),
+                scales: mode == .affine
+                    ? MLXArray.ones([4, 1]) : MLXArray.zeros([4, 1], dtype: .uint8),
+                biases: MLXArray.ones([4, 1]) * 2,
+                groupSize: 32, bits: 8, mode: mode)
+            let expected = try withError { loaded(input) }
+            try checkedEval(expected)
+            XCTAssertEqual(
+                expected.asArray(Float.self),
+                Array(repeating: mode == .affine ? Float(64) : Float(0), count: 4),
+                "the unsharded control must keep affine biases and ignore stale MXFP8 biases")
+
+            let sharded = try shardLinear(loaded, sharding: .shardedToAll, group: world)
+            do {
+                let actual = try withError { sharded(input) }
+                try checkedEval(actual)
+                XCTAssertEqual(
+                    actual.asArray(Float.self), expected.asArray(Float.self),
+                    "\(mode) sharded-to-all must preserve the loaded layer's bias semantics")
+            } catch {
+                XCTFail("\(mode) sharded-to-all rejected a valid loaded layer: \(error)")
+            }
+        }
     }
 
     func testShardPredicate() throws {
