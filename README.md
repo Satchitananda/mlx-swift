@@ -48,13 +48,16 @@ More details are in the [documentation](https://swiftpackageindex.com/ml-explore
 
 ### Fork compatibility
 
-This fork's September 14, 2026 upstream sync requires Swift 6.3 or newer with
-experimental C generation support (`experimentalCGen`). It was validated with
-Xcode 26.6 / Swift 6.3.3.
+This fork includes the published MLX Swift 0.32.3 release. It requires Swift 6.3
+or newer with experimental C generation support (`experimentalCGen`). The
+October 5, 2026 update was validated with Xcode 27.0 / Swift 6.4. See
+[the release sync notes](UPSTREAM_RELEASE_SYNC.md) for retained fixes and proof.
 
 `Stream()` creates an independently owned wrapper for the current task-scoped
 stream, falling back to the default stream on the default device. It retains
 the same evaluation stream, so synchronization waits for work queued there.
+The wrapper retains the owning stream until its own release, preventing the
+upstream stream pool from reusing a stream that is still borrowed.
 Use `Stream(device)` to create a new evaluation stream;
 `StreamOrDevice.stream(stream)` preserves the supplied stream.
 
@@ -191,6 +194,10 @@ Check out the [contribution guidelines](CONTRIBUTING.md) for more information
 on contributing to MLX. See the
 [docs](https://swiftpackageindex.com/ml-explore/mlx-swift/main/documentation/mlx/install) for more
 information on building from source, and running tests.
+
+For maintainer workflows, see [MAINTENANCE.md](MAINTENANCE.md) and the
+[integration test generator guide](tools/integration_tests/README.md).
+For skill installation, see [skills/README.md](skills/README.md).
 
 We are grateful for all of [our
 contributors](ACKNOWLEDGMENTS.md#Individual-Contributors). If you contribute

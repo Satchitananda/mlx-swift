@@ -91,12 +91,7 @@ dependencies: [.product(name: "MLX", package: "mlx-swift"),
                .product(name: "MLXOptimizers", package: "mlx-swift")]
 ```
 
-10. Update `tools/generate_integration_tests.py` as needed
-
-```
-import MLXNN
-@testable import MLXOptimizers
-```
+10. Update `tools/integration_tests/cases.py` as needed, regenerate tests if needed
 
 11. Update tests as needed
 
@@ -145,7 +140,7 @@ pre-generating the source when updating the `mlx` version.
     - this generates various files in Source/Cmlx/mlx-generated
 
 4. Fix any build issues with SwiftPM build (opening Package.swift)
-5. Fix any build issues with xcodeproj build (opening xcode/MLX.codeproj), see also [README.xcodeproj.md]
+5. Fix any build issues with xcodeproj build (opening `xcode/MLX.xcodeproj`), see also [framework setup](README.md#xcode-2).
 
 6. Wrap any new API with swift, update documentation, etc.
 
@@ -181,4 +176,3 @@ Settings, including header search paths are in xcode/xcconfig.
 ### MLX, etc.
 
 These are just normal frameworks that link to Cmlx and others as needed.  The source files are all swift and there are no special settings needed.
-

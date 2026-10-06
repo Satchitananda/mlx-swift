@@ -73,19 +73,19 @@ Note: some of the symbols are not linkable.
 `dtype` | ``MLXArray/dtype``
 `item` | ``MLXArray/item(_:)``
 `tolist` | ``MLXArray/asArray(_:)``
-`astype` | ``MLXArray/asType(_:stream:)-(HasDType.Type,StreamOrDevice)`` or ``MLXArray/asType(_:stream:)-(DType,StreamOrDevice)``
-`__getitem__` | ``MLXArray/subscript(_:stream:)-(MLXArrayIndex,StreamOrDevice)``
+`astype` | ``MLXArray/asType(_:stream:)-4eqoc`` or ``MLXArray/asType(_:stream:)-(DType,StreamOrDevice)``
+`__getitem__` | ``MLXArray/subscript(_:stream:)-([MLXArrayIndex],_)``
 `__len__` | ``MLXArray/count``
 `__iter__` | implements `Sequence`
 `__add__` | ``MLXArray/+(_:_:)-(MLXArray,MLXArray)``
-`__iadd__` | ``MLXArray/+=(_:_:)-(inout_MLXArray,MLXArray)``
+`__iadd__` | ``MLXArray/+=(_:_:)-(_,MLXArray)``
 `__sub__` | ``MLXArray/-(_:_:)-(MLXArray,MLXArray)``
-`__isub__` | ``MLXArray/-=(_:_:)-(inout_MLXArray,MLXArray)``
+`__isub__` | ``MLXArray/-=(_:_:)-(_,MLXArray)``
 `__mul__` | ``MLXArray/*(_:_:)-(MLXArray,MLXArray)``
-`__imul__` | ``MLXArray/*=(_:_:)-(inout_MLXArray,MLXArray)``
+`__imul__` | ``MLXArray/*=(_:_:)-(_,MLXArray)``
 `__truediv__` | ``MLXArray//(_:_:)-(MLXArray,MLXArray)``
 `__div__` | ``MLXArray//(_:_:)-(MLXArray,MLXArray)``
-`__idiv__` | ``MLXArray//=(_:_:)-(inout_MLXArray,MLXArray)``
+`__idiv__` | ``MLXArray//=(_:_:)-(_,MLXArray)``
 `__floordiv__` | ``MLXArray/floorDivide(_:stream:)``
 `__mod__` | ``MLXArray/%(_:_:)-(MLXArray,MLXArray)``
 `__eq__` | ``MLXArray/.==(_:_:)-(MLXArray,MLXArray)``
@@ -107,8 +107,8 @@ Note: some of the symbols are not linkable.
 `cos` | ``MLXArray/cos(stream:)``
 `cummax` | ``MLXArray/cummax(axis:reverse:inclusive:stream:)``
 `cummin` | ``MLXArray/cummin(axis:reverse:inclusive:stream:)``
-`cumprod` | ``MLXArray/cumprod(axis:reverse:inclusive:stream:)``
-`cumsum` | ``MLXArray/cumsum(axis:reverse:inclusive:stream:)``
+`cumprod` | ``MLXArray/cumprod(axis:reverse:inclusive:dtype:stream:)``
+`cumsum` | ``MLXArray/cumsum(axis:reverse:inclusive:dtype:stream:)``
 `exp` | ``MLXArray/exp(stream:)``
 `flatten` | ``MLXArray/flattened(start:end:stream:)``
 `log` | ``MLXArray/log(stream:)``
@@ -190,7 +190,7 @@ This is a mapping of `mx` free functions to their ``MLX`` counterparts.
 `identity` | ``MLXArray/identity(_:type:stream:)``
 `less` | ``MLX/less(_:_:stream:)``
 `less_equal` | ``MLX/lessEqual(_:_:stream:)``
-`linspace` | ``MLXArray/linspace(_:_:count:stream:)-(Int,Int,Int,StreamOrDevice)``
+`linspace` | ``MLXArray/linspace(_:_:count:dtype:stream:)-3fx01``
 `load` | ``MLX/loadArray(url:stream:)`` and ``MLX/loadArrays(url:stream:)``
 `log` | ``MLX/log(_:stream:)``
 `log10` | ``MLX/log10(_:stream:)``
@@ -210,7 +210,7 @@ This is a mapping of `mx` free functions to their ``MLX`` counterparts.
 `negative` | ``MLX/negative(_:stream:)``
 `not_equal` | ``MLX/notEqual(_:_:stream:)``
 `ones` | ``MLXArray/ones(_:type:stream:)``
-`ones_like` | ``MLXArray/ones(like:stream:)``
+`ones_like` | ``MLXArray/ones(like:dtype:stream:)``
 `pad` | ``MLX/padded(_:width:mode:value:stream:)``
 `partition` | ``MLX/partitioned(_:kth:axis:stream:)``
 `power` | ``MLX/pow(_:_:stream:)-(MLXArray,MLXArray,_)``
@@ -255,4 +255,4 @@ This is a mapping of `mx` free functions to their ``MLX`` counterparts.
 `var` | ``MLX/variance(_:axes:keepDims:ddof:stream:)``
 `where` | ``MLX/which(_:_:_:stream:)``
 `zeros` | ``MLXArray/zeros(_:type:stream:)``
-`zeros_like` | ``MLXArray/zeros(like:stream:)``
+`zeros_like` | ``MLXArray/zeros(like:dtype:stream:)``

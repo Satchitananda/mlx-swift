@@ -414,8 +414,9 @@ let output = posEnc(input)
 let alibi = ALiBi()
 
 // Or create bias manually for custom implementations:
-// Slopes decrease geometrically: 2^(-8/n), 2^(-16/n), ...
-// Bias matrix is slopes * (query_pos - key_pos)
+// For power-of-two head counts, slopes are 2^(-8/n), 2^(-16/n), ...
+// Other head counts combine slopes from the lower and upper powers of two.
+// Bias matrix is -slopes * abs(query_pos - key_pos)
 ```
 
 ## Containers
