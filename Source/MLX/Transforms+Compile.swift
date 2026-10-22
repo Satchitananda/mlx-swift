@@ -138,7 +138,9 @@ final class CompiledFunction: @unchecked (Sendable) {
     /// -- so this only moves the acquisition earlier by the state gathering and
     /// closure creation at the top of ``innerCall(_:)``.
     func call(_ arguments: [MLXArray]) -> [MLXArray] {
-        withEvalLock {
+        // the core keys its per-thread compile cache by its default stream
+        Stream.applyDefaultsToCore()
+        return withEvalLock {
             // ``lock`` exists only to guard the observed state (#226): the
             // `_updateInternal` swaps in `innerCall` are the sole mutation of
             // anything reachable from `self` -- every other stored property is

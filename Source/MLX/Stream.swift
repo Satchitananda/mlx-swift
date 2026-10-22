@@ -408,13 +408,23 @@ public final class Stream: @unchecked Sendable, Equatable {
     static func applyDefaultsToCore() {
         let streams = localStreams ?? globalStreams
         mlx_set_default_stream(streams.defaultStream.current.ctx)
-        // The core reads its own default device, fixed when the pool started. The Swift default
-        // device can differ inside `Device.withDefaultDevice`.
-        let coreDeviceType = globalStreams.defaultDeviceType
+        // The core reads its own default device. The Swift default device can differ inside
+        // `Device.withDefaultDevice`, so set the stream for the core's device as well.
+        let coreDeviceType = Self.coreDefaultDeviceType()
         if coreDeviceType != streams.defaultDeviceType {
             let promise = coreDeviceType == .cpu ? streams.cpu : streams.gpu
             mlx_set_default_stream(promise.current.ctx)
         }
+    }
+
+    /// The core's default device type, a process-wide value.
+    static func coreDefaultDeviceType() -> DeviceType {
+        var device = mlx_device_new()
+        defer { mlx_device_free(device) }
+        mlx_get_default_device(&device)
+        var type = MLX_CPU
+        mlx_device_get_type(&type, device)
+        return DeviceType(type)
     }
 
     /// Index of the core's default stream on this thread for the device type.
