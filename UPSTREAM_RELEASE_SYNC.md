@@ -45,7 +45,11 @@ Validation with the patched core: native SwiftPM build with complete strict conc
 executions (2 skipped) and 677 Swift Testing tests passed. Core C++ suite: the 6 linalg
 factorization tests that fail on unmodified v0.32.2 on this host still fail; no other failures.
 
-Known limit, not in this patch: vjp, jvp and vmap make tracer copies of already evaluated inputs on
-the calling thread's default stream (`make_tracer` in `mlx/transforms.cpp`). A gradient whose
-input was evaluated earlier still fails when it is evaluated on another thread. Transforms take no
-stream argument, so the fix belongs in a separate change.
+Second part, Swift only: core transforms (`vjp`, `jvp`, `value_and_grad`) take no stream. For an
+input with no graph node, one that is already evaluated or made from values, `make_tracer` in
+`mlx/transforms.cpp` copies it onto `default_stream(default_device())`. The core keeps that stream
+per thread and, when nothing set it, makes one that only the calling thread can use. Swift never
+set it. `Stream.applyDefaultsToCore()` now hands the core the Swift default streams on the current
+thread before each transform, so the copy lands on a pooled stream any thread can use.
+`Tests/MLXTests/TransformStreamTests.swift` crashes without it and passes with it. No core change;
+this is a Swift patch and stays after the core patch is dropped.

@@ -5,37 +5,19 @@ import Testing
 
 @testable import MLX
 
-/// Hands arrays to one evaluating thread. The creating thread waits on a semaphore until the
-/// evaluating thread is done, so the arrays are never used from two threads at the same time.
-private final class ArrayBox: @unchecked Sendable {
-    let values: [MLXArray]
-    init(_ values: [MLXArray]) { self.values = values }
-}
-
 /// Streams are owned by the thread that creates them. A core op that drops the caller's stream
 /// records its work on the calling thread's own default stream, and the graph then fails to
 /// evaluate on any other thread ("There is no Stream(gpu, N) in current thread"). Each case
 /// builds a graph on the test's thread and evaluates it on a new thread. The core's `imag` and
 /// `number_of_elements` have the same fix but no Swift entry point; the core's C++ tests cover them.
+/// `TransformStreamTests` covers inputs that have no graph node when a transform runs.
 @Suite(.serialized)
 struct CoreOpStreamTests {
-    /// Evaluates on a real thread, never a task that may run on the creating thread.
-    private static func evaluateOnAnotherThread(_ arrays: [MLXArray]) {
-        let box = ArrayBox(arrays)
-        let done = DispatchSemaphore(value: 0)
-        let thread = Thread {
-            eval(box.values)
-            done.signal()
-        }
-        thread.start()
-        done.wait()
-    }
-
     @Test("FFT with a length larger than the axis")
     func paddedFFT() {
         let frames = MLXArray.ones([4, 320])
         let spectrum = rfft(frames, n: 512, axis: -1)
-        Self.evaluateOnAnotherThread([spectrum])
+        CrossThreadEvaluation.evaluate([spectrum])
         #expect(spectrum.shape == [4, 257])
     }
 
@@ -47,7 +29,7 @@ struct CoreOpStreamTests {
         let gathered = x[rows, columns]
         let scattered = x.scattered(
             indices: [rows, columns], updates: MLXArray.ones([2, 3, 1, 1]), axes: [0, 1])
-        Self.evaluateOnAnotherThread([gathered, scattered])
+        CrossThreadEvaluation.evaluate([gathered, scattered])
         #expect(gathered.shape == [2, 3])
         #expect(scattered.shape == [4, 5])
     }
@@ -57,7 +39,7 @@ struct CoreOpStreamTests {
         let q = quantized(MLXArray.ones([32, 64]), groupSize: 64, bits: 4)
         let x = MLXArray.ones([2, 64], dtype: .float16)
         let y = quantizedMM(x, q.wq, scales: q.scales, biases: q.biases, groupSize: 64, bits: 4)
-        Self.evaluateOnAnotherThread([y])
+        CrossThreadEvaluation.evaluate([y])
         #expect(y.shape == [2, 32])
     }
 
@@ -69,7 +51,7 @@ struct CoreOpStreamTests {
                 return [q.wq, q.scales, q.biases!]
             }, inAxes: [0], outAxes: [0, 0, 0])
         let outputs = quantize([MLXArray.ones([2, 32, 64])])
-        Self.evaluateOnAnotherThread(outputs)
+        CrossThreadEvaluation.evaluate(outputs)
         #expect(outputs[1].shape == [2, 32, 1])
     }
 
@@ -78,7 +60,7 @@ struct CoreOpStreamTests {
         let a = MLXArray([Float(1), 0, 0]).reshaped(1, 3)
         let b = MLXArray([Float(0), 1, 0]).reshaped(1, 3)
         let c = cross(a, b)
-        Self.evaluateOnAnotherThread([c])
+        CrossThreadEvaluation.evaluate([c])
         #expect(c.asArray(Float.self) == [0, 0, 1])
     }
 
@@ -86,7 +68,7 @@ struct CoreOpStreamTests {
     func categoricalSamples() {
         let logits = MLXArray.zeros([4, 5])
         let samples = categorical(logits, count: 2, key: MLXRandom.key(0))
-        Self.evaluateOnAnotherThread([samples])
+        CrossThreadEvaluation.evaluate([samples])
         #expect(samples.shape == [4, 2])
     }
 
@@ -103,15 +85,12 @@ struct CoreOpStreamTests {
         }
     }
 
-    /// Each case makes new, unevaluated inputs. A transform makes its tracer copy of an input that
-    /// is already evaluated on the calling thread's default stream (`make_tracer` in the core),
-    /// which is a separate issue: transforms take no stream argument.
     @Test("Gradients", arguments: GradientCase.allCases)
     func vectorJacobianProducts(_ op: GradientCase) {
         let x = MLXArray(1 ... 20, [4, 5]).asType(.float32) / 10
         let (_, gradients) = vjp(
             { [op($0[0])] }, primals: [x], cotangents: [MLXArray.ones([4, 5])])
-        Self.evaluateOnAnotherThread(gradients)
+        CrossThreadEvaluation.evaluate(gradients)
         #expect(gradients[0].shape == [4, 5])
     }
 
@@ -125,7 +104,7 @@ struct CoreOpStreamTests {
             { [which(condition, $0[0], $0[1])] }, primals: [x, y], tangents: [tangent, tangent])
         let (_, normalized) = jvp(
             { [softmax($0[0], axis: -1)] }, primals: [x], tangents: [tangent])
-        Self.evaluateOnAnotherThread(selected + normalized)
+        CrossThreadEvaluation.evaluate(selected + normalized)
         #expect(selected[0].shape == [4, 5])
         #expect(normalized[0].shape == [4, 5])
     }

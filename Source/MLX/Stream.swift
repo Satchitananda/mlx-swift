@@ -398,6 +398,37 @@ public final class Stream: @unchecked Sendable, Equatable {
         return try await $localStreams.withValue(pair, operation: body)
     }
 
+    /// Make the Swift default streams the core's default streams on this thread.
+    ///
+    /// Core transforms take no stream. For an input with no graph node, one that is already
+    /// evaluated or made from values, they copy it onto `default_stream(default_device())`. The
+    /// core keeps that stream per thread, and when nothing set it, makes one that only this
+    /// thread can use. The Swift default is a pooled stream any thread can use. Call this before
+    /// each transform so the copy lands there.
+    static func applyDefaultsToCore() {
+        let streams = localStreams ?? globalStreams
+        mlx_set_default_stream(streams.defaultStream.current.ctx)
+        // The core reads its own default device, fixed when the pool started. The Swift default
+        // device can differ inside `Device.withDefaultDevice`.
+        let coreDeviceType = globalStreams.defaultDeviceType
+        if coreDeviceType != streams.defaultDeviceType {
+            let promise = coreDeviceType == .cpu ? streams.cpu : streams.gpu
+            mlx_set_default_stream(promise.current.ctx)
+        }
+    }
+
+    /// Index of the core's default stream on this thread for the device type.
+    static func coreDefaultStreamIndex(_ deviceType: DeviceType) -> Int {
+        let device = Device(deviceType)
+        let stream = mlx_stream_new()
+        defer { mlx_stream_free(stream) }
+        var handle = stream
+        mlx_get_default_stream(&handle, device.ctx)
+        var index: Int32 = 0
+        mlx_stream_get_index(&index, handle)
+        return Int(index)
+    }
+
     init(_ ctx: mlx_stream) {
         self.ctx = ctx
         self.borrowedStream = nil
