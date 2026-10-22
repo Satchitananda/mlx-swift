@@ -7,46 +7,55 @@ import Foundation
 /// a recursive lock to handle any cases where a closure might
 /// call back into eval.
 ///
-/// Acquire it through ``withEvalLock(_:)`` rather than directly: debug builds
-/// record ownership there so that the `evalLock` → `CompiledFunction.lock`
-/// ordering can be checked.
+/// Acquire it through ``withEvalLock(_:)`` or ``withEvalLockState(_:)`` rather
+/// than directly: ownership is recorded there, both so that
+/// ``eval(_:)-(Collection<MLXArray>)`` can tell whether it may release the lock
+/// while waiting, and (in debug builds) so that the `evalLock` →
+/// `CompiledFunction.lock` ordering can be checked.
 ///
 /// `evalLock` is the outermost lock in the library.  Nothing may be acquired
 /// before it and then be waited on from inside it; see `CompiledFunction.call`.
 let evalLock = NSRecursiveLock()
 
+/// Per-thread `evalLock` ownership.
+///
+/// Explicit bookkeeping is required: `evalLock` is recursive, so a
+/// successful `try()` cannot distinguish "this thread owns it" from "nobody
+/// owns it".  The depth is thread-local, so it needs no lock of its own --
+/// which matters, because this runs while holding `evalLock`.
+///
+/// This is deliberately per *thread* rather than a `@TaskLocal`: a lock is
+/// owned by a thread, and a task-local binding would be inherited by e.g. a
+/// `Task {}` created inside a traced function, which runs on another thread
+/// that does not hold the lock.
+enum EvalLockOwnership {
+
+    private static let depthKey: pthread_key_t = {
+        var key = pthread_key_t()
+        pthread_key_create(&key, nil)
+        return key
+    }()
+
+    static var isHeldByCurrentThread: Bool {
+        depth > 0
+    }
+
+    static var depth: Int {
+        Int(bitPattern: pthread_getspecific(depthKey))
+    }
+
+    static func entered() {
+        pthread_setspecific(depthKey, UnsafeRawPointer(bitPattern: depth + 1))
+    }
+
+    static func exited() {
+        pthread_setspecific(depthKey, UnsafeRawPointer(bitPattern: depth - 1))
+    }
+}
+
 #if DEBUG
 
-    /// Per-thread `evalLock` ownership, recorded so the ordering invariant in
-    /// `CompiledFunction.call` can be checked in debug builds.
-    ///
-    /// Explicit bookkeeping is required: `evalLock` is recursive, so a
-    /// successful `try()` cannot distinguish "this thread owns it" from "nobody
-    /// owns it".  The depth is thread-local, so it needs no lock of its own --
-    /// which matters, because this runs while holding `evalLock`.
-    enum EvalLockOwnership {
-
-        private static let depthKey: pthread_key_t = {
-            var key = pthread_key_t()
-            pthread_key_create(&key, nil)
-            return key
-        }()
-
-        static var isHeldByCurrentThread: Bool {
-            depth > 0
-        }
-
-        static var depth: Int {
-            Int(bitPattern: pthread_getspecific(depthKey))
-        }
-
-        static func entered() {
-            pthread_setspecific(depthKey, UnsafeRawPointer(bitPattern: depth + 1))
-        }
-
-        static func exited() {
-            pthread_setspecific(depthKey, UnsafeRawPointer(bitPattern: depth - 1))
-        }
+    extension EvalLockOwnership {
 
         // Counters, so a test can assert both that the invariant held and that
         // it was actually exercised -- a check count of zero would mean the test
@@ -95,24 +104,138 @@ let evalLock = NSRecursiveLock()
 
 #endif
 
+/// How the current call to ``withEvalLockState(_:)`` holds
+/// ``evalLock``.
+enum EvalLockState {
+    /// This call acquired ``evalLock``: it is released when the body returns.
+    case outermost
+
+    /// The current thread already held ``evalLock`` -- e.g. inside a `grad`,
+    /// `vjp`, `jvp`, `vmap` or `compile` trace, or a nested call.  The lock
+    /// stays held after the body returns.
+    case nested
+}
+
 /// Acquire ``evalLock`` for the duration of `body`.
 ///
-/// This is the single choke point for ``evalLock``; debug builds record
-/// ownership here so that `CompiledFunction` can check that its per-instance
-/// lock is never taken outside it.
+/// This is the single choke point for ``evalLock``; ownership is recorded here
+/// so that callers can tell whether the current thread already held it (see
+/// ``EvalLockState``) and so that `CompiledFunction` can check that its
+/// per-instance lock is never taken outside it.
 @inline(__always)
-func withEvalLock<R>(_ body: () throws -> R) rethrows -> R {
+func withEvalLockState<R>(_ body: (EvalLockState) throws -> R) rethrows -> R {
     evalLock.lock()
-    #if DEBUG
-        EvalLockOwnership.entered()
-    #endif
+    let state: EvalLockState = EvalLockOwnership.isHeldByCurrentThread ? .nested : .outermost
+    EvalLockOwnership.entered()
     defer {
-        #if DEBUG
-            EvalLockOwnership.exited()
-        #endif
+        EvalLockOwnership.exited()
         evalLock.unlock()
     }
-    return try body()
+    return try body(state)
+}
+
+/// Acquire ``evalLock`` for the duration of `body`.
+///
+/// See ``withEvalLockState(_:)``.
+@inline(__always)
+func withEvalLock<R>(_ body: () throws -> R) rethrows -> R {
+    try withEvalLockState { _ in try body() }
+}
+
+/// Is the array's data computed?
+///
+/// This is the observable difference between ``eval(_:)-(MLXArray...)`` and
+/// ``asyncEval(_:)-(Collection<MLXArray>)``, and the only direct way to check
+/// that `eval` is still synchronous now that it schedules with
+/// `mlx_async_eval` and waits with `mlx_eval`.
+///
+/// Internal: exists for the tests (`EvalTests`), which cannot reach `Cmlx`
+/// directly.  Call this only on the thread that owns `array`.
+func isEvaluated(_ array: MLXArray) -> Bool {
+    var available = false
+    _mlx_array_is_available(&available, array.ctx)
+    return available
+}
+
+/// Evaluate `array` and return a ``MaterializedArray`` snapshot of its contents.
+///
+/// The returned array is fully evaluated, immutable, and `Sendable`, so it can
+/// be passed across task and actor boundaries.  See ``MaterializedArray`` for
+/// the full set of guarantees.
+///
+/// `array` itself is unaffected — it remains the same lazy ``MLXArray`` it was
+/// before the call — but because evaluation is forced, any pending graph work
+/// behind it has been realized as a side effect.
+///
+/// ### Inside function transformations
+///
+/// `materialize` will `fatalError` if called inside a function transformation
+/// (`grad`, `valueAndGrad`, `vjp`, `jvp`, `vmap`, `compile`), including from
+/// a custom function (``CustomFunction(_:)``) body or VJP that is being run by
+/// one.  Inside `grad`/`vjp` an `eval` of a traced value computes it but
+/// does not detach it from the graph (the graph is needed for the backward
+/// pass), so the result could not honor the ``MaterializedArray`` contract:
+/// it would still reference the trace, and that graph is detached -- mutated
+/// -- by a later `eval` once tracing ends.  Inside `compile`/`vmap` traced
+/// values cannot be evaluated at all.
+///
+/// This is detected by the current thread holding the eval lock, which is
+/// the case for the whole duration of a transformation, so it also rejects
+/// arrays that do not depend on the traced inputs.  Materialize those before
+/// entering the transformation.
+///
+/// ### See Also
+/// - ``MaterializedArray``
+/// - ``MLXArray/materialized()``
+/// - ``materialize(_:)``
+public func materialize(_ array: MLXArray) -> MaterializedArray {
+    requireOutsideTransform()
+    eval(array)
+    var m = mlx_array_new()
+    mlx_array_set(&m, array.ctx)
+    return MaterializedArray(materialized: m)
+}
+
+/// Evaluate `arrays` and return a ``MaterializedArray`` snapshot for each one.
+///
+/// Equivalent to calling ``materialize(_:)`` on each element, but evaluates the
+/// whole batch in a single ``eval(_:)-(Sequence<Any>)`` call so MLX can schedule the
+/// work together.  Prefer this overload when you need to materialize several
+/// arrays at once — for example, the parameters of a model.
+///
+/// - Important: this must not be called inside a function transformation
+///   (`grad`, `valueAndGrad`, `vjp`, `jvp`, `vmap`, `compile`) and will
+///   `fatalError` if it is.  See
+///   ``materialize(_:)->MaterializedArray``.
+///
+/// ### See Also
+/// - ``MaterializedArray``
+/// - ``materialize(_:)``
+public func materialize(_ arrays: [MLXArray]) -> [MaterializedArray] {
+    requireOutsideTransform()
+    eval(arrays)
+    return arrays.map {
+        var m = mlx_array_new()
+        mlx_array_set(&m, $0.ctx)
+        return MaterializedArray(materialized: m)
+    }
+}
+
+/// Trap if called inside a function transformation -- see
+/// ``materialize(_:)->[MaterializedArray]``.
+///
+/// This is the `.nested` case of ``withEvalLockState(_:)``.  It reads the
+/// (thread-local) ownership directly rather than calling `withEvalLockState`:
+/// acquiring the lock just to check would add contention, and wrapping the
+/// `eval` in it would make that `eval` nested too, losing the wait outside of
+/// the lock in ``eval(_:)-(Collection<MLXArray>)``.
+private func requireOutsideTransform(_ caller: StaticString = #function) {
+    if EvalLockOwnership.isHeldByCurrentThread {
+        fatalError(
+            "\(caller) called inside a function transformation (grad, vjp, compile, etc.). "
+                + "A traced value cannot be materialized -- materialize before "
+                + "entering the transformation.")
+    }
 }
 
 /// Evaluate one or more `MLXArray`
@@ -120,23 +243,49 @@ func withEvalLock<R>(_ body: () throws -> R) rethrows -> R {
 /// ### See Also
 /// - <doc:lazy-evaluation>
 public func eval(_ arrays: MLXArray...) {
-    let vector_array = new_mlx_vector_array(arrays)
-    _ = withEvalLock {
-        mlx_eval(vector_array)
-    }
-    mlx_vector_array_free(vector_array)
+    eval(arrays)
 }
 
 /// Evaluate one or more `MLXArray`
 ///
+/// This is synchronous: the arrays are computed when it returns.  `evalLock`
+/// is only held while the work is scheduled, not while waiting for it to
+/// finish, so evaluations on other threads can overlap.
+///
+/// When the current thread already holds `evalLock` -- inside a `grad`,
+/// `vjp`, `jvp`, `vmap` or `compile` trace -- the lock cannot be released for
+/// the wait, and evaluation is fully synchronous under the lock.  That path is
+/// also required for correctness: evaluating an intermediate inside `grad` or
+/// `vjp` is allowed, but scheduling it asynchronously is not.
+///
+/// As with any other use of `MLXArray`, evaluation is not thread safe for a
+/// given array: arrays shared between threads (e.g. model weights) should be
+/// evaluated once, on one thread, before they are shared.
+///
 /// ### See Also
 /// - <doc:lazy-evaluation>
 public func eval(_ arrays: some Collection<MLXArray>) {
-    let vector_array = new_mlx_vector_array(arrays)
-    _ = withEvalLock {
-        mlx_eval(vector_array)
+    let vectorArray = new_mlx_vector_array(arrays)
+    defer { mlx_vector_array_free(vectorArray) }
+
+    let waitOutsideLock = withEvalLockState { state in
+        switch state {
+        case .nested:
+            // cannot release the lock to wait, and async eval rejects
+            // vjp/jvp tracers
+            _ = mlx_eval(vectorArray)
+            return false
+
+        case .outermost:
+            // schedule under the lock, wait (below) outside it
+            return mlx_async_eval(vectorArray) == 0
+        }
     }
-    mlx_vector_array_free(vector_array)
+
+    if waitOutsideLock {
+        // the arrays are scheduled, so this only waits for them
+        _ = mlx_eval(vectorArray)
+    }
 }
 
 /// Evaluate one or more `MLXArray` asynchronously.
