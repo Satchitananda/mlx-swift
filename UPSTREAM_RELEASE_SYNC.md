@@ -1,3 +1,27 @@
+# Upstream main sync — 2026-10-23
+
+Baseline: upstream `main` at `ce468463` ("Fix crossEntropy and nllLoss for a class axis other than
+the last (#509)"), 19 commits after 0.32.3. This sync deliberately takes unreleased upstream
+commits; the owner chose that scope on 2026-10-23. The core submodule stays on the fork's
+`Satchitananda/mlx` branch (see "Core patch in progress" below); upstream still pins `1f8e74e3f`.
+
+## Fork patch disposition
+
+| Patch | Disposition |
+| --- | --- |
+| Task-scoped `Stream()` compatibility | Retained unchanged. Upstream #499 made the global stream pair lazy for both devices to fix a lock inversion with `evalLock`; the fork's borrowed-owner handle sits on top and all `StreamTests` pass. |
+| Non-affine stale quantization biases | Retained unchanged. |
+| Missing-stream fixes (core submodule, `CoreOpStreamTests`) | Retained. |
+| Swift default stream handed to the core before transforms (`applyDefaultsToCore`) | Retained. One conflict in `Transforms+Compile.swift`: `CompiledFunction.call` keeps the call before `evalLock` with upstream's shorter comment. Upstream #469 (Sendable closures from `compile` and `vmap`) and #474 merged cleanly around it. |
+| CI/workflow delta | Deferred, as before. `.github/workflows/pull_request.yml` and `release.yml` are the fork's pre-sync versions; upstream's changes (#489, #495) need their own review. |
+
+## Validation
+
+Xcode 27.0 / Swift 6.4, complete strict concurrency, native SwiftPM build with tests. Full package:
+435 XCTest executions (2 skipped) and 765 Swift Testing tests in 40 suites passed, with a fresh
+`mlx.metallib` beside the test binary and `MLX_ENABLE_TF32=0 swift test --build-system native
+--skip-build --no-parallel`. Upstream added 43 XCTest and 80 Swift Testing tests in this range.
+
 # Published release sync — 2026-10-05
 
 Baseline: [`mlx-swift` 0.32.3](https://github.com/ml-explore/mlx-swift/releases/tag/0.32.3), commit `19601207e9a0de51e03ee6ec0c3c5f3784275075`. No commits after this tag are included. The MLX core submodule is `1f8e74e3f12f31365464a6867c6579f0e9b29d85`; mlx-c is `ebc88f10caa1b625e6b581437a8dea6df8a70085`.
