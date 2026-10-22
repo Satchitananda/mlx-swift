@@ -18,3 +18,34 @@ Xcode 27.0 / Swift 6.4, complete strict concurrency. Native SwiftPM build and al
 The host's default Swift Build invokes an Xcode Metal wrapper that reports a missing Metal Toolchain, despite `xcrun metal` resolving the installed compiler. Validation used `swift build --build-system native --build-tests --jobs 8 -Xswiftc -strict-concurrency=complete`, compiled all nine checked-in `Source/Cmlx/mlx-generated/metal/*.metal` files with `xcrun metal`, linked a fresh `mlx.metallib`, staged it beside the test binary, then ran `MLX_ENABLE_TF32=0 swift test --build-system native --skip-build --no-parallel`.
 
 The upstream Swift formatter still reports `default_ctx` as a naming violation in unchanged pool code. No new concurrency escape hatches or compiler-setting changes were added.
+
+## Core patch in progress: missing streams (2026-10-22)
+
+Streams are owned by the thread that makes them. A core op that drops the caller's stream records
+a helper op on the calling thread's own default stream, and the graph then fails on any other
+thread with `There is no Stream(gpu, N) in current thread`. Swift never sets the core's default
+stream, so every such op is a cross-thread crash in this fork.
+
+Fixed sites in the core (v0.32.2): `fft_impl` zero padding, `gather`/`scatter` index broadcast,
+`quantized_matmul` casts, the affine `quantize` fallback, `number_of_elements`, `imag` of a real
+input, `linalg::cross`, `random::categorical` with a sample count, and the vjp/jvp of `arctan2`,
+`layer_norm`, `logcumsumexp`, `softmax` and `where`. The core branch also cherry-picks upstream
+#4663 (layer_norm and sdpa fallbacks) and #4687 (gather matmul index cast), which fix three more
+sites of the same kind.
+
+| Item | State |
+| --- | --- |
+| `Tests/MLXTests/CoreOpStreamTests.swift` | Added. Builds each graph on the test thread and evaluates it on a new thread. All 8 crash on the current submodule and pass with the patched core. |
+| Core commit | Pending. Branch `fix/missing-stream-v0.32.2` on a fork of `ml-explore/mlx`: v0.32.2 + #4663 + #4687 + the fix, with two C++ graph-walk tests. |
+| Submodule | Still `1f8e74e3f`. Point `submodules/mlx` at the fork branch after the core commit is pushed. |
+| Upstream | Not reported yet. Drop this patch on the first sync that contains an upstream fix. |
+
+Validation with the patched core: native SwiftPM build with complete strict concurrency, then
+`MLX_ENABLE_TF32=0 swift test --build-system native --skip-build --no-parallel`: 392 XCTest
+executions (2 skipped) and 677 Swift Testing tests passed. Core C++ suite: the 6 linalg
+factorization tests that fail on unmodified v0.32.2 on this host still fail; no other failures.
+
+Known limit, not in this patch: vjp, jvp and vmap make tracer copies of already evaluated inputs on
+the calling thread's default stream (`make_tracer` in `mlx/transforms.cpp`). A gradient whose
+input was evaluated earlier still fails when it is evaluated on another thread. Transforms take no
+stream argument, so the fix belongs in a separate change.
