@@ -29,6 +29,8 @@ public func vmap(
         var traceInputs = mlx_vector_array_new()
         var traceOutputs = mlx_vector_array_new()
 
+        // vmap_replace moves or expands output axes with no stream of its own
+        Stream.applyDefaultsToCore()
         withEvalLock {
             let closure = new_mlx_closure(f)
             _ = inAxes32.withUnsafeBufferPointer { inAxesBuf in

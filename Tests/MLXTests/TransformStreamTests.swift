@@ -54,6 +54,37 @@ struct TransformStreamTests {
         #expect(second[0].shape == [4, 5])
     }
 
+    @Test("vmap that moves the output axis")
+    func vmapMovesOutputAxis() {
+        let x = Self.ones() * 2
+        eval(x)
+        let doubled = vmap({ [$0[0] * 2] }, inAxes: [1], outAxes: [0])([x])
+        CrossThreadEvaluation.evaluate(doubled)
+        #expect(doubled[0].shape == [5, 4])
+    }
+
+    @Test("vmap of an output that does not depend on the input")
+    func vmapExpandsIndependentOutput() {
+        let x = Self.ones()
+        eval(x)
+        let constant = vmap({ _ in [MLXArray.ones([3])] }, inAxes: [0], outAxes: [0])([x])
+        CrossThreadEvaluation.evaluate(constant)
+        #expect(constant[0].shape == [4, 3])
+    }
+
+    @Test("transform inside a default device override sets both core streams")
+    func coreDefaultsInsideDeviceOverride() {
+        let x = MLXArray.ones([2])
+        eval(x)
+        Device.withDefaultDevice(Device(.cpu)) {
+            let (_, gradients) = vjp(
+                { [$0[0] * 2] }, primals: [x], cotangents: [MLXArray.ones([2])])
+            CrossThreadEvaluation.evaluate(gradients)
+            #expect(Stream.coreDefaultStreamIndex(.cpu) == Stream.cpu.index)
+            #expect(Stream.coreDefaultStreamIndex(.gpu) == Stream.gpu.index)
+        }
+    }
+
     @Test("transforms give the core the Swift default stream")
     func coreDefaultFollowsSwiftDefault() {
         let deviceType = Device.defaultDevice().deviceType

@@ -49,7 +49,10 @@ Second part, Swift only: core transforms (`vjp`, `jvp`, `value_and_grad`) take n
 input with no graph node, one that is already evaluated or made from values, `make_tracer` in
 `mlx/transforms.cpp` copies it onto `default_stream(default_device())`. The core keeps that stream
 per thread and, when nothing set it, makes one that only the calling thread can use. Swift never
-set it. `Stream.applyDefaultsToCore()` now hands the core the Swift default streams on the current
-thread before each transform, so the copy lands on a pooled stream any thread can use.
-`Tests/MLXTests/TransformStreamTests.swift` crashes without it and passes with it. No core change;
-this is a Swift patch and stays after the core patch is dropped.
+set it. `vmap_replace` has the same gap: `moveaxis` and `expand_dims` with no stream.
+`Stream.applyDefaultsToCore()` now hands the core the Swift default streams on the current thread
+before each transform (`vjp`, `jvp`, `valueAndGrad`, `vmap`, and compiled calls, whose per-thread
+cache is keyed by that stream), so the copy lands on a pooled stream any thread can use. It reads
+the core's default device directly, since the Swift default device can differ inside
+`Device.withDefaultDevice`. `Tests/MLXTests/TransformStreamTests.swift` crashes without it and
+passes with it. No core change; this is a Swift patch and stays after the core patch is dropped.
