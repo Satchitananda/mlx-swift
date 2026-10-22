@@ -509,17 +509,21 @@ open class Module {
         modulePath: [String] = []
     ) throws -> Self {
         _checkNotSealed()
-        try update(parameters: parameters, verify: verify, path: path, modulePath: modulePath) {
-            m, k, a, v in
-            a._updateInternal(v)
-        }
+        try update(
+            parameters: parameters, verify: verify, path: path, modulePath: modulePath, mutate: nil)
         return self
     }
 
+    /// Recursive worker for ``update(parameters:verify:path:modulePath:)``.
+    ///
+    /// With `mutate` nil, parameters are replaced in place and child modules are
+    /// updated through the `open` method, so a subclass override on a nested
+    /// module runs when the update starts at an ancestor. A custom `mutate`
+    /// is applied to every parameter in the subtree and recurses directly.
     func update(
         parameters: ModuleParameters, verify: VerifyUpdate, path: [String] = [],
         modulePath: [String] = [],
-        mutate: (Module, String, MLXArray, MLXArray) -> Void
+        mutate: ((Module, String, MLXArray, MLXArray) -> Void)?
     ) throws {
         let modulePath = modulePath + [describeType(self)]
 
@@ -542,7 +546,11 @@ open class Module {
                         path: path, modules: modulePath, expectedShape: p.shape,
                         actualShape: newArray.shape)
                 }
-                mutate(self, key, p, newArray)
+                if let mutate {
+                    mutate(self, key, p, newArray)
+                } else {
+                    p._updateInternal(newArray)
+                }
 
             case (.value(.parameters), .none):
                 if Self.parameterIsValid(key) {
@@ -586,14 +594,26 @@ open class Module {
                 }
 
             case (.value(.module(let module)), .dictionary(let values)):
-                try module.update(
-                    parameters: NestedDictionary(values: values), verify: verify, path: path,
-                    modulePath: modulePath, mutate: mutate)
+                if let mutate {
+                    try module.update(
+                        parameters: NestedDictionary(values: values), verify: verify, path: path,
+                        modulePath: modulePath, mutate: mutate)
+                } else {
+                    try module.update(
+                        parameters: NestedDictionary(values: values), verify: verify, path: path,
+                        modulePath: modulePath)
+                }
 
             case (.value(.module(let module)), .none):
-                try module.update(
-                    parameters: NestedDictionary(), verify: verify, path: path,
-                    modulePath: modulePath, mutate: mutate)
+                if let mutate {
+                    try module.update(
+                        parameters: NestedDictionary(), verify: verify, path: path,
+                        modulePath: modulePath, mutate: mutate)
+                } else {
+                    try module.update(
+                        parameters: NestedDictionary(), verify: verify, path: path,
+                        modulePath: modulePath)
+                }
 
             case (.none, .none), (.value(.none), .none), (.value(.other(_)), .none):
                 break

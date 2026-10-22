@@ -13,12 +13,13 @@ commits; the owner chose that scope on 2026-10-23. The core submodule stays on t
 | Non-affine stale quantization biases | Retained unchanged. |
 | Missing-stream fixes (core submodule, `CoreOpStreamTests`) | Retained. |
 | Swift default stream handed to the core before transforms (`applyDefaultsToCore`) | Retained. One conflict in `Transforms+Compile.swift`: `CompiledFunction.call` keeps the call before `evalLock` with upstream's shorter comment. Upstream #469 (Sendable closures from `compile` and `vmap`) and #474 merged cleanly around it. |
+| Nested `update(parameters:)` overrides (new fork patch) | Upstream #418 made the open `update(parameters:verify:path:modulePath:)` delegate to an internal worker whose child recursion calls the worker directly, so an override on a nested module stopped running when the update starts at an ancestor. mlx-swift-lm's gated-delta-net layers use that override to drop fused projections; three of its tests failed. The worker now takes an optional `mutate`; with none, it replaces parameters in place and recurses through the open method again. `ModuleTests.testNestedUpdateOverrideRuns` fails on upstream main and passes here. Worth an upstream report. |
 | CI/workflow delta | Deferred, as before. `.github/workflows/pull_request.yml` and `release.yml` are the fork's pre-sync versions; upstream's changes (#489, #495) need their own review. |
 
 ## Validation
 
 Xcode 27.0 / Swift 6.4, complete strict concurrency, native SwiftPM build with tests. Full package:
-435 XCTest executions (2 skipped) and 765 Swift Testing tests in 40 suites passed, with a fresh
+436 XCTest executions (2 skipped) and 765 Swift Testing tests in 40 suites passed, with a fresh
 `mlx.metallib` beside the test binary and `MLX_ENABLE_TF32=0 swift test --build-system native
 --skip-build --no-parallel`. Upstream added 43 XCTest and 80 Swift Testing tests in this range.
 
