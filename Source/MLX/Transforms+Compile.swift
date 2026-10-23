@@ -3,11 +3,47 @@
 import Cmlx
 import Foundation
 
-// Note: this is all immutable state -- the `id` property is only set at init time
+/// A weak handle to MLX's thread-local cache. Retaining this wrapper does not keep
+/// the backend cache alive after its thread exits.
+private final class ThreadCompilationCache {
+    private let ctx: mlx_compile_cache
+
+    private init() {
+        var cache = mlx_compile_cache_new()
+        mlx_detail_compile_cache(&cache)
+        self.ctx = cache
+    }
+
+    deinit {
+        mlx_compile_cache_free(ctx)
+    }
+
+    static var current: ThreadCompilationCache {
+        let key = "MLX.ThreadCompilationCache"
+        let dictionary = Thread.current.threadDictionary
+        if let cache = dictionary[key] as? ThreadCompilationCache {
+            return cache
+        }
+        let cache = ThreadCompilationCache()
+        dictionary[key] = cache
+        return cache
+    }
+
+    func erase(_ functionID: UInt) {
+        mlx_detail_compile_erase(ctx, functionID)
+    }
+}
+
+// Mutable cache bookkeeping is guarded by evalLock. The stateful overloads also
+// hold the instance lock while replacing observed inputs and outputs.
+// Only the overloads accepting Sendable captures return a Sendable closure.
 final class CompiledFunction: @unchecked (Sendable) {
 
     /// unique (for the lifetime of the object) identifier for the compiled function
     private var id: UInt!
+
+    /// Every backend cache this function has used, guarded by evalLock.
+    private var caches: [ObjectIdentifier: ThreadCompilationCache] = [:]
 
     /// guards the observed state (``inputs`` / ``outputs``) -- see #226
     ///
@@ -27,6 +63,27 @@ final class CompiledFunction: @unchecked (Sendable) {
 
     let shapeless: Bool
 
+    /// The sealed arrays reachable from ``inputs`` when the cached graphs were
+    /// traced, or `nil` before the first call.
+    ///
+    /// Sealed arrays are not threaded through the compiled function as inputs
+    /// (that would mean swapping tracers into them), they are baked into the
+    /// traced graph as constants.  The compiler cache only keys on the inputs,
+    /// so if the state is later rebound to *different* sealed arrays (a
+    /// different `MaterializedModule`, a replaced child module, a new
+    /// `MaterializedArray`) the cache would happily return a graph holding the
+    /// old ones.  ``innerCall(_:)`` compares the current sealed arrays against
+    /// these and erases the cache (forcing a retrace) if they differ.
+    ///
+    /// Identity (`===`) is sufficient: a sealed array's contents can never be
+    /// replaced, so the same object always refers to the same node.  The arrays
+    /// are retained so that a freed one can't be replaced by a new array at the
+    /// same address.  This costs no extra memory: the cached graph holds the
+    /// same data.
+    ///
+    /// Guarded by ``lock``.
+    private var tracedConstants: [MLXArray]?
+
     init(
         inputs: [any Updatable], outputs: [any Updatable], shapeless: Bool,
         _ f: @escaping ([MLXArray]) -> [MLXArray]
@@ -38,70 +95,34 @@ final class CompiledFunction: @unchecked (Sendable) {
         self.id = UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque())
     }
 
-    /// Remove the compiled structure from the back end.
-    ///
-    /// ### Why this takes `evalLock`
-    ///
-    /// `mlx_detail_compile_erase` is `compiler_cache().erase(fun_id)`, i.e.
-    /// `std::unordered_map::erase` on the *same* process-global
-    /// `mlx::core::detail::CompilerCache` that ``innerCall(_:)`` reads and
-    /// inserts into via `CompilerCache::find` (`cache_[fun_id]`, which itself
-    /// can insert and rehash, followed by `entries.push_back`).  That cache has
-    /// no synchronization of its own, and `find` hands back a *reference* to an
-    /// entry that the caller then fills in and reads from across the whole
-    /// trace.  An unlocked erase can therefore rehash the map out from under a
-    /// concurrent `find`, or destroy the very entry another thread is compiling
-    /// into.
-    ///
-    /// Every other use of that cache happens under `evalLock`, so the erase has
-    /// to as well; otherwise the lock does not actually make the cache
-    /// single-threaded, it only makes most of it single-threaded.
-    ///
-    /// ### Why blocking here is safe
-    ///
-    /// `deinit` runs on whichever thread drops the last reference:
-    ///
-    /// - A thread that holds no MLX lock simply waits for the current eval or
-    ///   compiled call to finish.  Bounded, since `evalLock` is only ever held
-    ///   for the duration of one call.
-    /// - A thread already inside a compiled call or an `eval` -- for instance a
-    ///   traced body that drops the last reference to some other compiled
-    ///   function -- already holds `evalLock`, and it is an `NSRecursiveLock`,
-    ///   so re-entry is free.
-    /// - A thread holding some other ``CompiledFunction``'s ``lock`` also holds
-    ///   `evalLock` already (see ``call(_:)``), so that is the same case; no new
-    ///   edge is added to the lock graph.
-    ///
-    /// Within this library the only releases of a ``CompiledFunction`` are the
-    /// caller's own (the closure returned by ``compile(inputs:outputs:shapeless:_:)-([Updatable],[Updatable],Bool,([MLXArray])->[MLXArray])``
-    /// holds the sole strong reference) and the `mlx_closure_free` of the
-    /// closure built in ``innerCall(_:)``, which runs on the calling thread with
-    /// `evalLock` already held.  Nothing hands a reference to a back-end worker
-    /// thread, so the erase can never be the thing an `evalLock` holder is
-    /// waiting for.
-    ///
-    /// The erase stays synchronous rather than being deferred to a queue on
-    /// purpose: ``id`` is the object's own address, so once this object is
-    /// freed a new ``CompiledFunction`` can be allocated at the same address and
-    /// receive the same id.  A deferred erase could delete that new function's
-    /// cache entries.
+    init(
+        shapeless: Bool,
+        _ f: @escaping @Sendable ([MLXArray]) -> [MLXArray]
+    ) {
+        self.f = f
+        self.inputs = []
+        self.outputs = []
+        self.shapeless = shapeless
+        self.id = UInt(bitPattern: Unmanaged.passUnretained(self).toOpaque())
+    }
+
+    // Erase every calling thread's cache before this address can be reused as an ID.
     deinit {
-        let functionID = id!
         withEvalLock {
             #if DEBUG
-                // Trivially true two lines below the acquisition -- it is here to
-                // catch a future change that moves the erase back out from under
-                // the lock, the same way `withInstanceLock` guards `call(_:)`.
                 EvalLockOwnership.requireHeldByCurrentThread(
                     "the compiler cache was erased without holding evalLock; "
                         + "see CompiledFunction.deinit")
                 EvalLockOwnership.recordCompileErase()
             #endif
-            // remove the compiled structure from the back end
-            var cache = mlx_compile_cache_new()
-            mlx_detail_compile_cache(&cache)
-            defer { mlx_compile_cache_free(cache) }
-            mlx_detail_compile_erase(cache, functionID)
+            eraseCaches()
+        }
+    }
+
+    /// Must be called under evalLock, including when sealed state is rebound.
+    private func eraseCaches() {
+        for cache in caches.values {
+            cache.erase(id)
         }
     }
 
@@ -112,10 +133,8 @@ final class CompiledFunction: @unchecked (Sendable) {
     /// `evalLock` is acquired **outermost**, before the per-instance ``lock``.
     /// That order is not a preference, it is forced:
     ///
-    /// - Tracing mutates process-global state that has no synchronization of its
-    ///   own -- `mlx::core::detail::CompilerCache` is an unguarded singleton and
-    ///   `detail::InTracing::trace_stack()` is a plain function-local `static`,
-    ///   not `thread_local` -- so `evalLock` has to span the whole trace (#339).
+    /// - A trace can call back into Swift and mutate observed state, so
+    ///   `evalLock` spans the whole trace and cache invalidation (#339).
     /// - The trace calls back into Swift, and the traced body routinely calls
     ///   *other* compiled functions: every `MLXNN` activation is a file-scope
     ///   `CompiledFunction`, so e.g. `silu` inside a traced body enters
@@ -138,16 +157,10 @@ final class CompiledFunction: @unchecked (Sendable) {
     /// -- so this only moves the acquisition earlier by the state gathering and
     /// closure creation at the top of ``innerCall(_:)``.
     func call(_ arguments: [MLXArray]) -> [MLXArray] {
-        withEvalLock {
-            // ``lock`` exists only to guard the observed state (#226): the
-            // `_updateInternal` swaps in `innerCall` are the sole mutation of
-            // anything reachable from `self` -- every other stored property is
-            // `let`, and `id` is written once at init.  With no state there is
-            // nothing to guard, and `evalLock` above already serializes the
-            // compiler cache and every other caller.
-            //
-            // This is the common case: every compiled function in `MLXNN` is
-            // stateless.
+        // the core keys its per-thread compile cache by its default stream
+        Stream.applyDefaultsToCore()
+        return withEvalLock {
+            // Stateless functions need only evalLock for cache bookkeeping.
             if inputs.isEmpty && outputs.isEmpty {
                 return innerCall(arguments)
             }
@@ -176,8 +189,35 @@ final class CompiledFunction: @unchecked (Sendable) {
     ///   too unless this function has no observed state; see ``call(_:)``,
     ///   which is the only caller.
     func innerCall(_ arguments: [MLXArray]) -> [MLXArray] {
-        let stateInputs = inputs.flatMap { $0.innerState() }
+        let cache = ThreadCompilationCache.current
+        caches[ObjectIdentifier(cache)] = cache
+
+        // Sealed arrays (MaterializedArray, the parameters of a sealed module)
+        // can never change, and must not be mutated, so they are not threaded
+        // through the tracer swap below -- they are simply captured as
+        // constants, the same as any other array reachable from the closure
+        // that isn't part of `inputs`/`outputs`.
+        let state = inputs.flatMap { $0.innerState() }
+        let stateInputs = state.filter { !$0.isSealed }
         let argumentsCount = arguments.count
+
+        // The sealed arrays are baked into the cached graphs, so if they have
+        // been rebound since those were traced the cache is stale -- see
+        // ``tracedConstants``.
+        if !inputs.isEmpty {
+            let constants = state.filter { $0.isSealed }
+            if let traced = tracedConstants {
+                let same =
+                    traced.count == constants.count
+                    && zip(traced, constants).allSatisfy { $0 === $1 }
+                if !same {
+                    eraseCaches()
+                    tracedConstants = constants
+                }
+            } else {
+                tracedConstants = constants
+            }
+        }
 
         // inner function to hande the compilation.  this is called
         // once per compile (typically once overall, but can be called
@@ -203,7 +243,9 @@ final class CompiledFunction: @unchecked (Sendable) {
             let result = f(tracerArguments)
 
             // recapture the state as it may have changed
-            let stateOutputTracers = outputs.flatMap { $0.innerState() }.map { $0.copyContext() }
+            let stateOutputTracers = outputs.flatMap { $0.innerState() }
+                .filter { !$0.isSealed }
+                .map { $0.copyContext() }
 
             // put the original values back in the state
             for (s, saved) in zip(stateInputs, savedStateInputs) {
@@ -253,7 +295,7 @@ final class CompiledFunction: @unchecked (Sendable) {
         let resultsPlusStateOutput = mlx_vector_array_values(resultVector)
 
         // push the stateOutput into the state
-        let stateOutput = outputs.flatMap { $0.innerState() }
+        let stateOutput = outputs.flatMap { $0.innerState() }.filter { !$0.isSealed }
 
         for (s, newValues) in zip(stateOutput, resultsPlusStateOutput.suffix(stateOutput.count)) {
             s._updateInternal(newValues)
@@ -287,8 +329,33 @@ final class CompiledFunction: @unchecked (Sendable) {
 public func compile(
     inputs: [any Updatable] = [], outputs: [any Updatable] = [], shapeless: Bool = false,
     _ f: @escaping ([MLXArray]) -> [MLXArray]
-) -> @Sendable ([MLXArray]) -> [MLXArray] {
+) -> ([MLXArray]) -> [MLXArray] {
     let compileState = CompiledFunction(inputs: inputs, outputs: outputs, shapeless: shapeless, f)
+
+    return { arrays in
+        compileState.call(arrays)
+    }
+}
+
+/// Returns a compiled function that produces the same output as `f()`.
+///
+/// - Parameters:
+///   - shapeless: A function compiled with the `shapeless`
+///     option enabled will not be recompiled when the input shape changes. Not all
+///     functions can be compiled with `shapeless` enabled. Attempting to compile
+///     such functions with shapeless enabled will throw. Note, changing the number
+///     of dimensions or type of any input will result in a recompilation even with
+///     `shapeless` set to `true`
+///   - f: function to compile
+/// - Returns: a new function that produces the same output as `f()`
+///
+/// ### See Also
+/// - <doc:compilation>
+public func compile(
+    shapeless: Bool = false,
+    _ f: @escaping @Sendable ([MLXArray]) -> [MLXArray]
+) -> @Sendable ([MLXArray]) -> [MLXArray] {
+    let compileState = CompiledFunction(shapeless: shapeless, f)
 
     return { arrays in
         compileState.call(arrays)
@@ -304,8 +371,31 @@ public func compile(
 public func compile(
     inputs: [any Updatable] = [], outputs: [any Updatable] = [], shapeless: Bool = false,
     _ f: @escaping (MLXArray) -> MLXArray
-) -> @Sendable (MLXArray) -> MLXArray {
+) -> (MLXArray) -> MLXArray {
     let compileState = CompiledFunction(inputs: inputs, outputs: outputs, shapeless: shapeless) {
+        [f($0[0])]
+    }
+
+    return { a in
+        let r = compileState.call([a])
+        // r is empty only when an MLX error fired inside a withError scope — the
+        // error is already stored in the ErrorBox.  Return a placeholder so that
+        // withError can throw instead of crashing with "Index out of range".
+        return r.isEmpty ? MLXArray(0) : r[0]
+    }
+}
+
+/// Overload of ``compile(shapeless:_:)-6mb2r`` that takes a single ``MLXArray`` and
+/// produces a single ``MLXArray``.
+///
+/// ### See Also
+/// - <doc:compilation>
+/// - ``compile(inputs:outputs:shapeless:_:)-7korq``
+public func compile(
+    shapeless: Bool = false,
+    _ f: @escaping @Sendable (MLXArray) -> MLXArray
+) -> @Sendable (MLXArray) -> MLXArray {
+    let compileState = CompiledFunction(shapeless: shapeless) {
         [f($0[0])]
     }
 
@@ -328,9 +418,31 @@ public func compile(
     inputs: [any Updatable] = [], outputs: [any Updatable] = [], shapeless: Bool = false,
     _ f: @escaping (MLXArray, MLXArray) -> MLXArray
 )
-    -> @Sendable (MLXArray, MLXArray) -> MLXArray
+    -> (MLXArray, MLXArray) -> MLXArray
 {
     let compileState = CompiledFunction(inputs: inputs, outputs: outputs, shapeless: shapeless) {
+        [f($0[0], $0[1])]
+    }
+
+    return { a, b in
+        let r = compileState.call([a, b])
+        return r.isEmpty ? MLXArray(0) : r[0]
+    }
+}
+
+/// Overload of ``compile(shapeless:_:)-6mb2r`` that takes two ``MLXArray`` and
+/// produces a single ``MLXArray``.
+///
+/// ### See Also
+/// - <doc:compilation>
+/// - ``compile(inputs:outputs:shapeless:_:)-7korq``
+public func compile(
+    shapeless: Bool = false,
+    _ f: @escaping @Sendable (MLXArray, MLXArray) -> MLXArray
+)
+    -> @Sendable (MLXArray, MLXArray) -> MLXArray
+{
+    let compileState = CompiledFunction(shapeless: shapeless) {
         [f($0[0], $0[1])]
     }
 
@@ -348,11 +460,33 @@ public func compile(
 /// - ``compile(inputs:outputs:shapeless:_:)-([Updatable],[Updatable],Bool,([MLXArray])->[MLXArray])``
 public func compile(
     inputs: [any Updatable] = [], outputs: [any Updatable] = [], shapeless: Bool = false,
-    _ f: @Sendable @escaping (MLXArray, MLXArray, MLXArray) -> MLXArray
+    _ f: @escaping (MLXArray, MLXArray, MLXArray) -> MLXArray
+)
+    -> (MLXArray, MLXArray, MLXArray) -> MLXArray
+{
+    let compileState = CompiledFunction(inputs: inputs, outputs: outputs, shapeless: shapeless) {
+        [f($0[0], $0[1], $0[2])]
+    }
+
+    return { a, b, c in
+        let r = compileState.call([a, b, c])
+        return r.isEmpty ? MLXArray(0) : r[0]
+    }
+}
+
+/// Overload of ``compile(shapeless:_:)-6mb2r`` that takes three ``MLXArray`` and
+/// produces a single ``MLXArray``.
+///
+/// ### See Also
+/// - <doc:compilation>
+/// - ``compile(inputs:outputs:shapeless:_:)-7korq``
+public func compile(
+    shapeless: Bool = false,
+    _ f: @escaping @Sendable (MLXArray, MLXArray, MLXArray) -> MLXArray
 )
     -> @Sendable (MLXArray, MLXArray, MLXArray) -> MLXArray
 {
-    let compileState = CompiledFunction(inputs: inputs, outputs: outputs, shapeless: shapeless) {
+    let compileState = CompiledFunction(shapeless: shapeless) {
         [f($0[0], $0[1], $0[2])]
     }
 

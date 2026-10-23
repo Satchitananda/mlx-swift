@@ -209,6 +209,7 @@ let noCudaCmlxExcludes = [
             // the wrappers there so they must not also be built directly
             "mlx/mlx/backend/cpu/compiled.cpp",
             "mlx/mlx/backend/cpu/jit_compiler.cpp",
+            "mlx/mlx/distributed/jaccl/no_jaccl.cpp",
 
             // opt-out of these backends (using metal)
             "mlx/mlx/backend/no_gpu",
@@ -222,6 +223,7 @@ let noCudaCmlxExcludes = [
 
     let cxxSettings: [CXXSetting] = [
         .headerSearchPath("metal-cpp"),
+        .headerSearchPath("mlx/mlx/distributed/jaccl/lib"),
 
         .define("MLX_USE_ACCELERATE"),
         .define("ACCELERATE_NEW_LAPACK"),
@@ -292,7 +294,8 @@ let cmlx = Target.target(
         "mlx/mlx/backend/metal/kernels",
         "mlx/mlx/backend/metal/nojit_kernels.cpp",
 
-        // distributed backends: enable ring, disable MPI + NCCL + JACCL
+        // distributed backends: enable ring, disable MPI + NCCL.  JACCL is
+        // built through mlx-conditional on macOS, so its sources are excluded here.
         "mlx/mlx/distributed/mpi/mpi.cpp",
         "mlx/mlx/distributed/ring/no_ring.cpp",
         "mlx/mlx/distributed/nccl/nccl.cpp",
@@ -310,6 +313,7 @@ let cmlx = Target.target(
         .headerSearchPath("json/single_include/nlohmann"),
         .headerSearchPath("fmt/include"),
         .define("MLX_VERSION", to: "\"0.32.0\""),
+        .disableWarning("shorten-64-to-32"),
     ],
     linkerSettings: linkerSettings,
     plugins: cudaBuildPlugins,
@@ -347,16 +351,9 @@ let package = Package(
         ),
 
         .target(
-            name: "cLogSupport",
-            path: "Source/cLogSupport",
-            publicHeadersPath: "include"
-        ),
-
-        .target(
             name: "MLX",
             dependencies: [
                 "Cmlx",
-                "cLogSupport",
                 .product(name: "Numerics", package: "swift-numerics"),
             ],
             exclude: mlxSwiftExcludes,

@@ -976,3 +976,35 @@ class ModuleTests: XCTestCase {
         quantize(model: s)
     }
 }
+
+extension ModuleTests {
+
+    /// A nested module's `update(parameters:verify:path:modulePath:)` override
+    /// must run when the update starts at an ancestor. Layers use that override
+    /// to drop caches derived from the replaced parameters.
+    func testNestedUpdateOverrideRuns() throws {
+        final class CountingChild: Module {
+            let weight = MLXArray([Float(1)])
+            var updates = 0
+
+            override func update(
+                parameters: ModuleParameters, verify: VerifyUpdate,
+                path: [String] = [], modulePath: [String] = []
+            ) throws -> Self {
+                updates += 1
+                return try super.update(
+                    parameters: parameters, verify: verify, path: path, modulePath: modulePath)
+            }
+        }
+        final class Parent: Module {
+            @ModuleInfo var child = CountingChild()
+        }
+
+        let parent = Parent()
+        parent.update(
+            parameters: ModuleParameters.unflattened(["child.weight": MLXArray([Float(2)])]))
+
+        XCTAssertEqual(parent.child.updates, 1, "the child's update override did not run")
+        XCTAssertEqual(parent.child.weight.item(Float.self), 2)
+    }
+}

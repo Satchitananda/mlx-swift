@@ -166,8 +166,9 @@ private final class RealizedStreamPromise: StreamPromise, Sendable {
 
 /// TaskLocal promise for a pair of Streams -- one for CPU and one for GPU.
 ///
-/// Implementation note: the default device will be a realized Stream and the
-/// none default device will be a lazy promise.
+/// Implementation note: in the scoped promises the default device will be a
+/// realized Stream and the non-default device will be a lazy promise.  The
+/// global promise is lazy for both, see ``init()``.
 private final class StreamPairPromise: Sendable {
     let cpu: StreamPromise
     let gpu: StreamPromise
@@ -181,6 +182,10 @@ private final class StreamPairPromise: Sendable {
     }
 
     /// Initialize the global promise.
+    ///
+    /// Both streams are lazy here to avoid the lock inversion
+    /// from `let globalStreams = StreamPairPromise()` and evalLock.
+    /// See StreamInitializationTests.
     init() {
         var default_ctx = mlx_device_new()
         mlx_get_default_device(&default_ctx)
@@ -188,11 +193,11 @@ private final class StreamPairPromise: Sendable {
         let defaultDevice = Device(default_ctx)
         self.defaultDeviceType = defaultDevice.deviceType
         if defaultDevice.deviceType == .cpu {
-            self.cpu = RealizedStreamPromise(defaultDevice)
+            self.cpu = LazyStreamPromise(defaultDevice)
             self.gpu = LazyStreamPromise(Device(.gpu))
         } else {
             self.cpu = LazyStreamPromise(Device(.cpu))
-            self.gpu = RealizedStreamPromise(defaultDevice)
+            self.gpu = LazyStreamPromise(defaultDevice)
         }
     }
 
@@ -396,6 +401,47 @@ public final class Stream: @unchecked Sendable, Equatable {
         let pair = StreamPairPromise(
             parent: localStreams ?? globalStreams, device: device)
         return try await $localStreams.withValue(pair, operation: body)
+    }
+
+    /// Make the Swift default streams the core's default streams on this thread.
+    ///
+    /// Core transforms take no stream. For an input with no graph node, one that is already
+    /// evaluated or made from values, they copy it onto `default_stream(default_device())`. The
+    /// core keeps that stream per thread, and when nothing set it, makes one that only this
+    /// thread can use. The Swift default is a pooled stream any thread can use. Call this before
+    /// each transform so the copy lands there.
+    static func applyDefaultsToCore() {
+        let streams = localStreams ?? globalStreams
+        mlx_set_default_stream(streams.defaultStream.current.ctx)
+        // The core reads its own default device. The Swift default device can differ inside
+        // `Device.withDefaultDevice`, so set the stream for the core's device as well.
+        let coreDeviceType = Self.coreDefaultDeviceType()
+        if coreDeviceType != streams.defaultDeviceType {
+            let promise = coreDeviceType == .cpu ? streams.cpu : streams.gpu
+            mlx_set_default_stream(promise.current.ctx)
+        }
+    }
+
+    /// The core's default device type, a process-wide value.
+    static func coreDefaultDeviceType() -> DeviceType {
+        var device = mlx_device_new()
+        defer { mlx_device_free(device) }
+        mlx_get_default_device(&device)
+        var type = MLX_CPU
+        mlx_device_get_type(&type, device)
+        return DeviceType(type)
+    }
+
+    /// Index of the core's default stream on this thread for the device type.
+    static func coreDefaultStreamIndex(_ deviceType: DeviceType) -> Int {
+        let device = Device(deviceType)
+        let stream = mlx_stream_new()
+        defer { mlx_stream_free(stream) }
+        var handle = stream
+        mlx_get_default_stream(&handle, device.ctx)
+        var index: Int32 = 0
+        mlx_stream_get_index(&index, handle)
+        return Int(index)
     }
 
     init(_ ctx: mlx_stream) {
