@@ -61,8 +61,8 @@ sites of the same kind.
 | Item | State |
 | --- | --- |
 | `Tests/MLXTests/CoreOpStreamTests.swift` | Added. Builds each graph on the test thread and evaluates it on a new thread. All 8 crash on the current submodule and pass with the patched core. |
-| Core commit | `cd55fa85f` on branch `fix/missing-stream-v0.32.2` of `Satchitananda/mlx`: v0.32.2 + #4663 + #4687 + the fix, with two C++ graph-walk tests. |
-| Submodule | `submodules/mlx` URL is `https://github.com/Satchitananda/mlx`, pinned at `cd55fa85f`. Move it back to `ml-explore/mlx` on the first sync that contains an upstream fix. |
+| Core commit | `428e77937` on branch `fix/missing-stream-v0.32.2` of `Satchitananda/mlx`: v0.32.2 + #4663 + #4687 + both commits of upstream PR 4746 (the 21 sites, then transforms, `vmap_replace`, `custom_function`, `depends`, keyless random keys, a stream-argument checker and tests). |
+| Submodule | `submodules/mlx` URL is `https://github.com/Satchitananda/mlx`, pinned at `428e77937`. Move it back to `ml-explore/mlx` on the first sync that contains an upstream fix. |
 | Upstream | Not reported yet. Drop this patch on the first sync that contains an upstream fix. |
 
 Validation with the patched core: native SwiftPM build with complete strict concurrency, then
