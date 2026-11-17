@@ -1,6 +1,7 @@
 // Copyright © 2024 Apple Inc.
 
 import Foundation
+import Metal
 import XCTest
 
 @testable import MLX
@@ -66,6 +67,24 @@ class MLXArrayTests: XCTestCase {
             XCTAssertEqual(data.shape, [0, 200])
         }
         XCTAssertEqual(b.T.asData(access: .copy).data.count, 0)
+    }
+
+    func testAsMTLBufferEmpty() throws {
+        // an empty array has no backing pointer and Metal cannot make a
+        // zero-length buffer, so asMTLBuffer returns nil (see issue #520)
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let arrays = [
+            MLXArray([Float](), [0]),
+            MLXArray.ones([1, 200])[128...],
+            MLXArray.zeros([1, 0, 3, 448]),
+        ]
+        for a in arrays {
+            XCTAssertEqual(a.size, 0)
+            XCTAssertNil(a.asMTLBuffer(device: device, noCopy: false))
+            XCTAssertNil(a.asMTLBuffer(device: device, noCopy: true))
+        }
     }
 
     func testAsArrayScalar() {
