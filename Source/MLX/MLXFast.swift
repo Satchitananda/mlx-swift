@@ -4,6 +4,42 @@ import Cmlx
 
 public enum MLXFast {
 
+    /// Chunked gated delta network forward pass.
+    ///
+    /// - Parameters:
+    ///   - queries: shape (B, T, Hk, Dk)
+    ///   - keys: shape (B, T, Hk, Dk)
+    ///   - values: shape (B, T, Hv, Dv)
+    ///   - gamma: decay rate in linear space (B, T, Hv)
+    ///   - beta: delta update rates (B, T, Hv)
+    ///   - initialState: initial hidden state (B, Hv, Dv, Dk), zeros if not given
+    ///   - mask: optional boolean mask (B, T); masked steps leave the state unchanged
+    ///   - stream: stream or device to evaluate on
+    /// - Returns: `output` (B, T, Hv, Dv) and the final `state` (B, Hv, Dv, Dk)
+    public static func gatedDeltaUpdate(
+        queries: MLXArray,
+        keys: MLXArray,
+        values: MLXArray,
+        gamma: MLXArray,
+        beta: MLXArray,
+        initialState: MLXArray? = nil,
+        mask: MLXArray? = nil,
+        stream: StreamOrDevice = .default
+    ) -> (output: MLXArray, state: MLXArray) {
+        var result = mlx_vector_array_new()
+        defer { mlx_vector_array_free(result) }
+        mlx_fast_gated_delta_update(
+            &result,
+            queries.ctx, keys.ctx, values.ctx,
+            gamma.ctx, beta.ctx,
+            (initialState ?? .mlxNone).ctx,
+            (mask ?? .mlxNone).ctx,
+            stream.ctx)
+
+        let tuple = mlx_vector_array_values(result, count: 2)
+        return (output: tuple[0], state: tuple[1])
+    }
+
     /// Optimized implementation of `NN.RoPE`.
     ///
     /// Used like this:
@@ -233,16 +269,18 @@ public enum MLXFast {
     /// - Parameters:
     ///   - x: input array
     ///   - weight: A multiplicative weight to scale the result by. The `weight` should be one-dimensional
-    ///     with the same size as the last axis of `x`.
+    ///     with the same size as the last axis of `x`.  If not given no scaling will occur and the
+    ///     result will have the same dtype as `x`.
     ///   - eps: A small additive constant for numerical stability
     ///   - stream: stream or device to evaluate on
     public static func rmsNorm(
-        _ x: MLXArray, weight: MLXArray, eps: Float, stream: StreamOrDevice = .default
+        _ x: MLXArray, weight: MLXArray? = nil, eps: Float,
+        stream: StreamOrDevice = .default
     )
         -> MLXArray
     {
         var result = mlx_array_new()
-        mlx_fast_rms_norm(&result, x.ctx, weight.ctx, eps, stream.ctx)
+        mlx_fast_rms_norm(&result, x.ctx, (weight ?? .mlxNone).ctx, eps, stream.ctx)
         return MLXArray(result)
     }
 
@@ -365,12 +403,14 @@ public func scaledDotProductAttention(
 /// - Parameters:
 ///   - x: input array
 ///   - weight: A multiplicative weight to scale the result by. The `weight` should be one-dimensional
-///     with the same size as the last axis of `x`.
+///     with the same size as the last axis of `x`.  If not given no scaling will occur and the
+///     result will have the same dtype as `x`.
 ///   - eps: A small additive constant for numerical stability
 ///   - stream: stream or device to evaluate on
-public func rmsNorm(_ x: MLXArray, weight: MLXArray, eps: Float, stream: StreamOrDevice = .default)
-    -> MLXArray
-{
+public func rmsNorm(
+    _ x: MLXArray, weight: MLXArray? = nil, eps: Float,
+    stream: StreamOrDevice = .default
+) -> MLXArray {
     return MLXFast.rmsNorm(x, weight: weight, eps: eps, stream: stream)
 }
 

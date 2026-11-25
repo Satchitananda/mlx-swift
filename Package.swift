@@ -33,6 +33,23 @@ import PackageDescription
     let cudaTargets: [Target] = []
 #endif
 
+/// Additional include roots for the CUDA build, colon-separated.
+///
+/// The CMake build fetches cudnn-frontend and CUTLASS itself, but SwiftPM has no
+/// equivalent, so `cudnn_utils.cpp` and the `quantized/qmm` kernels cannot find
+/// their headers unless the roots are supplied here.
+let extraCudaIncludePaths =
+    (Context.environment["MLX_CUDA_INCLUDE_PATHS"] ?? "")
+    .split(separator: ":")
+    .map(String.init)
+    .filter { !$0.isEmpty }
+
+/// CCCL headers used to compile device code and to JIT at runtime.
+///
+/// Defaults to the copy shipped with the CUDA toolkit. MLX pins its own CCCL
+/// version, so allow pointing at that copy instead when the two differ.
+let cudaCcclDir = Context.environment["MLX_CCCL_DIR"] ?? "/usr/local/cuda/include/cccl"
+
 let noMetalCmlxExcludes = [
     // Exclude Metal backend files, but keep no_metal.cpp for stubs
     // "mlx/mlx/backend/metal/no_metal.cpp",
@@ -41,6 +58,7 @@ let noMetalCmlxExcludes = [
     "mlx/mlx/backend/metal/compiled.cpp",
     "mlx/mlx/backend/metal/conv.cpp",
     "mlx/mlx/backend/metal/copy.cpp",
+    "mlx/mlx/backend/metal/cross_entropy.cpp",
     "mlx/mlx/backend/metal/custom_kernel.cpp",
     "mlx/mlx/backend/metal/device.cpp",
     "mlx/mlx/backend/metal/device_info.cpp",
@@ -49,6 +67,7 @@ let noMetalCmlxExcludes = [
     "mlx/mlx/backend/metal/event.cpp",
     "mlx/mlx/backend/metal/fence.cpp",
     "mlx/mlx/backend/metal/fft.cpp",
+    "mlx/mlx/backend/metal/gated_delta_update.cpp",
     "mlx/mlx/backend/metal/hadamard.cpp",
     "mlx/mlx/backend/metal/indexing.cpp",
     "mlx/mlx/backend/metal/jit_kernels.cpp",
@@ -81,6 +100,7 @@ let noCudaCmlxExcludes = [
     "mlx/mlx/backend/cuda/conv.cpp",
     "mlx/mlx/backend/cuda/cublas_utils.cpp",
     "mlx/mlx/backend/cuda/cudnn_utils.cpp",
+    "mlx/mlx/backend/cuda/cusolver_utils.cpp",
     "mlx/mlx/backend/cuda/custom_kernel.cpp",
     "mlx/mlx/backend/cuda/delayload.cpp",
     "mlx/mlx/backend/cuda/device_info.cpp",
@@ -97,6 +117,7 @@ let noCudaCmlxExcludes = [
     "mlx/mlx/backend/cuda/scaled_dot_product_attention.cpp",
     "mlx/mlx/backend/cuda/slicing.cpp",
     "mlx/mlx/backend/cuda/utils.cpp",
+    "mlx/mlx/backend/cuda/wddm.cpp",
     "mlx/mlx/backend/cuda/worker.cpp",
     "mlx/mlx/backend/cuda/binary",
     "mlx/mlx/backend/cuda/conv",
@@ -134,16 +155,18 @@ let noCudaCmlxExcludes = [
                 "mlx-c/mlx/c/metal.cpp",
 
                 "mlx/mlx/backend/cuda/delayload.cpp",  // For Windows
+                "mlx/mlx/backend/cuda/wddm.cpp",
 
                 // built by the CudaBuild plugin (nvcc), not by SwiftPM
                 "mlx/mlx/backend/cuda/quantized/qmm",
             ] + noMetalCmlxExcludes
 
-        cxxSettings = [
-            .unsafeFlags(["-I/usr/local/cuda/include"]),
-            .unsafeFlags(["-I/usr/local/cuda/include/cccl"]),
-            .define("MLX_CCCL_DIR", to: "\"/usr/local/cuda/include/cccl\""),
-        ]
+        cxxSettings =
+            [
+                .unsafeFlags(["-I/usr/local/cuda/include"]),
+                .unsafeFlags(["-I\(cudaCcclDir)"]),
+                .define("MLX_CCCL_DIR", to: "\"\(cudaCcclDir)\""),
+            ] + extraCudaIncludePaths.map { .unsafeFlags(["-I\($0)"]) }
 
         linkerSettings = [
             .linkedLibrary("gfortran", .when(platforms: [.linux])),
@@ -152,6 +175,7 @@ let noCudaCmlxExcludes = [
             .linkedLibrary("openblas", .when(platforms: [.linux])),
             .unsafeFlags(["-L/usr/local/cuda/lib64"]),
             .unsafeFlags(["-L/usr/local/cuda/lib64/stubs"]),
+            .linkedLibrary("cusolver"),
             .linkedLibrary("cudnn"),
             .linkedLibrary("cublas"),
             .linkedLibrary("cublasLt"),
@@ -226,6 +250,7 @@ let noCudaCmlxExcludes = [
         .headerSearchPath("mlx/mlx/distributed/jaccl/lib"),
 
         .define("MLX_USE_ACCELERATE"),
+        .define("MLX_USE_JACCL", .when(traits: ["JACCL"])),
         .define("ACCELERATE_NEW_LAPACK"),
         .define("_METAL_"),
         .define("SWIFTPM_BUNDLE", to: "\"mlx-swift_Cmlx\""),
@@ -295,7 +320,8 @@ let cmlx = Target.target(
         "mlx/mlx/backend/metal/nojit_kernels.cpp",
 
         // distributed backends: enable ring, disable MPI + NCCL.  JACCL is
-        // built through mlx-conditional on macOS, so its sources are excluded here.
+        // built through mlx-conditional on macOS when the JACCL trait is
+        // enabled, so its sources are excluded here.
         "mlx/mlx/distributed/mpi/mpi.cpp",
         "mlx/mlx/distributed/ring/no_ring.cpp",
         "mlx/mlx/distributed/nccl/nccl.cpp",
@@ -338,6 +364,14 @@ let package = Package(
         .library(name: "MLXFFT", targets: ["MLXFFT"]),
         .library(name: "MLXLinalg", targets: ["MLXLinalg"]),
         .library(name: "MLXFast", targets: ["MLXFast"]),
+    ],
+    traits: [
+        .trait(
+            name: "JACCL",
+            description:
+                "Builds the JACCL distributed backend (RDMA over Thunderbolt 5) on macOS. Disable it to leave the backend out of an app that does not run distributed MLX."
+        ),
+        .default(enabledTraits: ["JACCL"]),
     ],
     dependencies: [
         // for Complex type

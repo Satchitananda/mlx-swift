@@ -47,7 +47,7 @@ final class CompiledFunction: @unchecked (Sendable) {
 
     /// guards the observed state (``inputs`` / ``outputs``) -- see #226
     ///
-    /// This is always acquired *inside* `evalLock`; see ``call(_:)`` for the
+    /// This is always acquired *inside* `evalLock`; see ``call(_:expected:)`` for the
     /// ordering rule.  It is recursive because a compiled function's body can
     /// legitimately re-enter that same compiled function on the same thread
     /// while it is being traced (a nested call with tracer inputs bypasses the
@@ -156,10 +156,17 @@ final class CompiledFunction: @unchecked (Sendable) {
     /// hold it through `mlx_closure_apply` -- i.e. across the actual evaluation
     /// -- so this only moves the acquisition earlier by the state gathering and
     /// closure creation at the top of ``innerCall(_:)``.
-    func call(_ arguments: [MLXArray]) -> [MLXArray] {
+    ///
+    /// - Parameters:
+    ///   - arguments: arguments to the compiled function
+    ///   - expected: minimum number of results.  If an MLX error fires inside a
+    ///     `withError` scope the error is stored in the ErrorBox and the results
+    ///     are padded with `mlxNone` so callers can index them without crashing
+    ///     and `withError` can throw.
+    func call(_ arguments: [MLXArray], expected: Int) -> [MLXArray] {
         // the core keys its per-thread compile cache by its default stream
         Stream.applyDefaultsToCore()
-        return withEvalLock {
+        var results = withEvalLock {
             // Stateless functions need only evalLock for cache bookkeeping.
             if inputs.isEmpty && outputs.isEmpty {
                 return innerCall(arguments)
@@ -168,11 +175,13 @@ final class CompiledFunction: @unchecked (Sendable) {
                 innerCall(arguments)
             }
         }
+        while results.count < expected { results.append(.mlxNone) }
+        return results
     }
 
     /// Acquire ``lock``, checking the ordering invariant first.
     ///
-    /// The check is where the invariant actually lives, not in ``call(_:)``: a
+    /// The check is where the invariant actually lives, not in ``call(_:expected:)``: a
     /// change that moved the per-instance lock back outside `evalLock` -- the
     /// shape that produced the deadlock -- trips this on the first compiled
     /// call, deterministically and without needing to lose a race.
@@ -186,7 +195,7 @@ final class CompiledFunction: @unchecked (Sendable) {
     }
 
     /// - Precondition: `evalLock` is held by the caller, and ``lock`` is held
-    ///   too unless this function has no observed state; see ``call(_:)``,
+    ///   too unless this function has no observed state; see ``call(_:expected:)``,
     ///   which is the only caller.
     func innerCall(_ arguments: [MLXArray]) -> [MLXArray] {
         let cache = ThreadCompilationCache.current
@@ -262,7 +271,7 @@ final class CompiledFunction: @unchecked (Sendable) {
         // note: this will use the cached compile (via the id)
         // but will be able to re-evaluate with fresh state if needed
         //
-        // evalLock is already held by call(_:) and covers everything through
+        // evalLock is already held by call(_:expected:) and covers everything through
         // mlx_closure_apply below, which is where the trace runs.
         var compiled = mlx_closure_new()
         let compileStatus = mlx_detail_compile(&compiled, innerClosure, id, shapeless, [], 0)
@@ -296,6 +305,13 @@ final class CompiledFunction: @unchecked (Sendable) {
 
         // push the stateOutput into the state
         let stateOutput = outputs.flatMap { $0.innerState() }.filter { !$0.isSealed }
+
+        // a short result means something went wrong -- don't push result
+        // arrays into the state (and avoid a negative prefix below).
+        // call(_:expected:) pads the results.
+        guard resultsPlusStateOutput.count >= stateOutput.count else {
+            return []
+        }
 
         for (s, newValues) in zip(stateOutput, resultsPlusStateOutput.suffix(stateOutput.count)) {
             s._updateInternal(newValues)
@@ -333,7 +349,7 @@ public func compile(
     let compileState = CompiledFunction(inputs: inputs, outputs: outputs, shapeless: shapeless, f)
 
     return { arrays in
-        compileState.call(arrays)
+        compileState.call(arrays, expected: 0)
     }
 }
 
@@ -358,7 +374,7 @@ public func compile(
     let compileState = CompiledFunction(shapeless: shapeless, f)
 
     return { arrays in
-        compileState.call(arrays)
+        compileState.call(arrays, expected: 0)
     }
 }
 
@@ -377,11 +393,7 @@ public func compile(
     }
 
     return { a in
-        let r = compileState.call([a])
-        // r is empty only when an MLX error fired inside a withError scope — the
-        // error is already stored in the ErrorBox.  Return a placeholder so that
-        // withError can throw instead of crashing with "Index out of range".
-        return r.isEmpty ? MLXArray(0) : r[0]
+        compileState.call([a], expected: 1)[0]
     }
 }
 
@@ -400,11 +412,7 @@ public func compile(
     }
 
     return { a in
-        let r = compileState.call([a])
-        // r is empty only when an MLX error fired inside a withError scope — the
-        // error is already stored in the ErrorBox.  Return a placeholder so that
-        // withError can throw instead of crashing with "Index out of range".
-        return r.isEmpty ? MLXArray(0) : r[0]
+        compileState.call([a], expected: 1)[0]
     }
 }
 
@@ -425,8 +433,7 @@ public func compile(
     }
 
     return { a, b in
-        let r = compileState.call([a, b])
-        return r.isEmpty ? MLXArray(0) : r[0]
+        compileState.call([a, b], expected: 1)[0]
     }
 }
 
@@ -447,8 +454,7 @@ public func compile(
     }
 
     return { a, b in
-        let r = compileState.call([a, b])
-        return r.isEmpty ? MLXArray(0) : r[0]
+        compileState.call([a, b], expected: 1)[0]
     }
 }
 
@@ -469,8 +475,7 @@ public func compile(
     }
 
     return { a, b, c in
-        let r = compileState.call([a, b, c])
-        return r.isEmpty ? MLXArray(0) : r[0]
+        compileState.call([a, b, c], expected: 1)[0]
     }
 }
 
@@ -491,8 +496,7 @@ public func compile(
     }
 
     return { a, b, c in
-        let r = compileState.call([a, b, c])
-        return r.isEmpty ? MLXArray(0) : r[0]
+        compileState.call([a, b, c], expected: 1)[0]
     }
 }
 
