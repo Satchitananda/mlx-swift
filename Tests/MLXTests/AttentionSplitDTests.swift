@@ -37,12 +37,16 @@ struct AttentionSplitDTests {
         return positions.expandedDimensions(axis: 1) .>= positions.expandedDimensions(axis: 0)
     }
 
-    private static func inputs(heads: Int, dim: Int) -> (MLXArray, MLXArray, MLXArray) {
+    /// Explicit keys keep the inputs fixed without touching the global random state.
+    private static func inputs(heads: Int, dim: Int, seed: UInt64) -> (
+        MLXArray, MLXArray, MLXArray
+    ) {
         let shape = [1, heads, length, dim]
+        let keys = MLXRandom.split(key: MLXRandom.key(seed), into: 3)
         return (
-            MLXRandom.uniform(-1.0 ..< 1.0, shape).asType(.bfloat16),
-            MLXRandom.uniform(-1.0 ..< 1.0, shape).asType(.bfloat16),
-            MLXRandom.uniform(-1.0 ..< 1.0, shape).asType(.bfloat16)
+            MLXRandom.uniform(-1.0 ..< 1.0, shape, key: keys[0]).asType(.bfloat16),
+            MLXRandom.uniform(-1.0 ..< 1.0, shape, key: keys[1]).asType(.bfloat16),
+            MLXRandom.uniform(-1.0 ..< 1.0, shape, key: keys[2]).asType(.bfloat16)
         )
     }
 
@@ -52,8 +56,8 @@ struct AttentionSplitDTests {
         #expect(difference < 0.02, "largest difference \(difference)")
     }
 
-    @Test(.randomSeed(0)) func bfloat16HeadDim256WithABoolMask() {
-        let (q, k, v) = Self.inputs(heads: 2, dim: 256)
+    @Test func bfloat16HeadDim256WithABoolMask() {
+        let (q, k, v) = Self.inputs(heads: 2, dim: 256, seed: 0)
         let scale = 1 / Float(256).squareRoot()
         let keep = Self.causalKeep(Self.length)
         let fused = MLXFast.scaledDotProductAttention(
@@ -61,8 +65,8 @@ struct AttentionSplitDTests {
         Self.expectMatches(fused, Self.reference(q, k, v, scale: scale, keep: keep))
     }
 
-    @Test(.randomSeed(1)) func bfloat16HeadDim256Causal() {
-        let (q, k, v) = Self.inputs(heads: 2, dim: 256)
+    @Test func bfloat16HeadDim256Causal() {
+        let (q, k, v) = Self.inputs(heads: 2, dim: 256, seed: 1)
         let scale = 1 / Float(256).squareRoot()
         let fused = MLXFast.scaledDotProductAttention(
             queries: q, keys: k, values: v, scale: scale, mask: .causal)
@@ -71,8 +75,8 @@ struct AttentionSplitDTests {
     }
 
     /// 32 heads × 1024 / 32 query rows = 1024 query blocks, the D512 kernel's minimum.
-    @Test(.randomSeed(2)) func bfloat16HeadDim512Causal() {
-        let (q, k, v) = Self.inputs(heads: 32, dim: 512)
+    @Test func bfloat16HeadDim512Causal() {
+        let (q, k, v) = Self.inputs(heads: 32, dim: 512, seed: 2)
         let scale = 1 / Float(512).squareRoot()
         let fused = MLXFast.scaledDotProductAttention(
             queries: q, keys: k, values: v, scale: scale, mask: .causal)
