@@ -1,3 +1,84 @@
+# Upstream main sync — 2026-11-25
+
+Baseline: upstream `main` at `00afc1dd` ("Fix asMTLBuffer crash on zero-size arrays (#522)"),
+14 commits after `ce468463`, including mlx v0.32.4 (#508) and the `update(parameters:)` fix
+(#510). Plan: `plans/wip/MLX_FORKS_UPSTREAM_SYNC_20261125_PLAN.md` (decision D5 A).
+
+## Core submodule
+
+| Item | State |
+| --- | --- |
+| Core branch | `fix/missing-stream-v0.32.4` of `Satchitananda/mlx`, head `6a3f90b29`: tag `v0.32.4` (`36969c09`, upstream mlx-swift's pin) plus `git cherry-pick -x` of ml-explore/mlx #4746 (`303763f1a` → `12dd0bc45`) and #4818 (`ab5d01b7f` → `6a3f90b29`). Both applied without conflicts; `git patch-id --stable` matches the upstream commits. v0.32.4 already contains #4663 and #4687, which the old v0.32.2 branch cherry-picked. |
+| Submodule | URL stays `https://github.com/Satchitananda/mlx`, pinned at `6a3f90b29`. mlx-c is upstream's `a26f2d5` (0.8.0). |
+| Old fork core | `428e77937` (v0.32.2 + #4663 + #4687 + PR 4746 port). Its stream changes differ from the merged #4746 only in shape (helper names, comment text); every fix site is in the merged commit. |
+| Drop | On the first upstream mlx-swift bump to a core ≥ v0.32.5 (both picks are in v0.32.5): move the URL back to `ml-explore/mlx` and take upstream's pin. |
+
+## Fork patch disposition
+
+| Patch | Disposition |
+| --- | --- |
+| Missing-stream fixes (core) | Now exactly the two upstream-merged commits above. `CoreOpStreamTests` pass. |
+| Nested `update(parameters:)` overrides | Dropped for upstream #510; `Module.swift` and `ModuleTests.swift` equal upstream. Upstream's `updateParametersCallsChildOverride` covers the fork's `testNestedUpdateOverrideRuns` (an override on a direct child and on a list child), so the fork test is removed. After #519 turned `ModuleTests` into a Swift Testing struct, the fork's XCTest-style extension would have compiled but never run. |
+| Swift default stream handed to the core before transforms (`applyDefaultsToCore`) | Retained; see the probe below. One conflict in `Transforms+Compile.swift`: upstream's new `call(_:expected:)` keeps the call before `evalLock`. |
+| Task-scoped `Stream()` compatibility | Retained unchanged; `StreamTests` pass. |
+| Non-affine stale quantization biases (`dab691d8`) | Retained unchanged (`Quantized.swift`, `Distributed.swift`); no upstream change to them in range. |
+| `Tests/MLXTests/CoreOpStreamTests.swift`, `TransformStreamTests.swift` | Retained. |
+| CI/workflow delta | Deferred. `.github` equals fork main; upstream's `build-linux-cuda-cmake.sh` and `pull_request.yml` changes conflicted and were not taken. |
+
+## Generated sources
+
+`tools/update-mlx.sh` with the new core and mlx-c (cmake 4.4.5 from a scratch venv; the host has
+no cmake). `Source/Cmlx/mlx-generated` (Metal, JIT, CPU preamble) and `Source/Cmlx/include/mlx/c`
+are byte-identical to upstream's v0.32.4 output. One real change, committed:
+`include-framework/mlx-random.h`, where `KeySequence::next` takes a `StreamOrDevice` (#4746).
+Two script artefacts were discarded: the `Metal.hpp` banner embeds the superproject HEAD, and
+`mlx-generated/cuda/cuda_jit_sources.h` came out in a different glob order (`gather`/`gather_axis`,
+`scatter`) with identical arrays. The script removes its own `build/`.
+
+## `applyDefaultsToCore` probe
+
+#4746 makes `vjp`/`jvp` share the buffer of an evaluated input with no graph node and take the
+stream of the first input that has one, so the Swift patch might be redundant. The probe removed
+`applyDefaultsToCore` and its five call sites (`Transforms*.swift` then equal upstream) and ran
+`CoreOpStreamTests`, `TransformStreamTests` and the new `TransformStreamNumericsTests`. The new
+suite builds each graph on a new thread and evaluates it on another, comparing numbers with closed
+forms or the same arithmetic evaluated in place.
+
+| Case | Patch kept | Patch removed |
+| --- | --- | --- |
+| Second derivative (`grad` of `grad`) built on a new thread | passes | crash: `Fatal error: There is no Stream(gpu, 0) in current thread. at …/mlx-c/mlx/c/transforms.cpp:15` |
+| `TransformStreamTests` cross-thread evaluation cases (6) | pass | pass |
+| `TransformStreamTests` core-default assertions (2; they test the patch itself) | pass | fail, as expected |
+| Other numerics cases (vjp, jvp, valueAndGrad, vmap, compiled function and its gradient) | pass | pass |
+
+Ruling: keep the patch. Without it a graph traced on a thread whose core default stream was never
+set cannot be evaluated elsewhere.
+
+The two #4818 cases also fail without #4818: the complex L2 norm crashes with the patch kept
+(it is not a transform), and the scatter-maximum gradient crashes once the patch is also removed
+(with the patch, the core's default stream is already a pooled one). Both pass on the new core.
+
+## Validation
+
+Xcode 27.1 / Swift 6.4, complete strict concurrency:
+`swift build --build-system native --build-tests --jobs 8 -Xswiftc -strict-concurrency=complete`.
+A fresh `mlx.metallib` from all 14 `Source/Cmlx/mlx-generated/metal/**/*.metal` files
+(`xcrun -sdk macosx metal -Wall -Wextra -fno-fast-math -Wno-c++17-extensions
+-Wno-c++20-extensions -c`, then `xcrun -sdk macosx metallib`) was staged beside the test binary
+and in the `.xctest` bundle's `Contents/MacOS` and `Contents/Resources`. Then
+`swift test --build-system native --skip-build --no-parallel`:
+
+| Regime | XCTest | Swift Testing |
+| --- | --- | --- |
+| default TF32 | 226 executions, 2 skipped, 0 failures | 1041 tests in 61 suites passed |
+| `MLX_ENABLE_TF32=0` | 226 executions, 2 skipped, 0 failures | 1041 tests in 61 suites passed |
+
+The two skips are the multi-process ring tests (`DistributedNNRingTests.testShardedLayers`,
+`DistributedRingTests.testRingCollectives`), as before. The XCTest count fell from 436 because
+upstream #519 moved many suites to Swift Testing. No TF32 tolerance needed adapting. No new
+concurrency warnings in fork-owned code; the new test's lock-protected hand-off box is its only
+`@unchecked Sendable`, beside the existing `CrossThreadArrays`.
+
 # Upstream main sync — 2026-10-23
 
 Baseline: upstream `main` at `ce468463` ("Fix crossEntropy and nllLoss for a class axis other than
