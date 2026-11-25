@@ -8,10 +8,10 @@ Baseline: upstream `main` at `00afc1dd` ("Fix asMTLBuffer crash on zero-size arr
 
 | Item | State |
 | --- | --- |
-| Core branch | `fix/missing-stream-v0.32.4` of `Satchitananda/mlx`, head `6a3f90b29`: tag `v0.32.4` (`36969c09`, upstream mlx-swift's pin) plus `git cherry-pick -x` of ml-explore/mlx #4746 (`303763f1a` → `12dd0bc45`) and #4818 (`ab5d01b7f` → `6a3f90b29`). Both applied without conflicts; `git patch-id --stable` matches the upstream commits. v0.32.4 already contains #4663 and #4687, which the old v0.32.2 branch cherry-picked. |
-| Submodule | URL stays `https://github.com/Satchitananda/mlx`, pinned at `6a3f90b29`. mlx-c is upstream's `a26f2d5` (0.8.0). |
+| Core branch | `fix/missing-stream-v0.32.4` of `Satchitananda/mlx`, head `016c35d90`: tag `v0.32.4` (`36969c09`, upstream mlx-swift's pin) plus `git cherry-pick -x` of ml-explore/mlx #4746 (`303763f1a` → `12dd0bc45`), #4818 (`ab5d01b7f` → `6a3f90b29`) and #4903 (`190cb65e7` → `016c35d90`). All three applied without conflicts; `git patch-id --stable` matches the upstream commits. v0.32.4 already contains #4663 and #4687, which the old v0.32.2 branch cherry-picked. |
+| Submodule | URL stays `https://github.com/Satchitananda/mlx`, pinned at `016c35d90`. mlx-c is upstream's `a26f2d5` (0.8.0). |
 | Old fork core | `428e77937` (v0.32.2 + #4663 + #4687 + PR 4746 port). Its stream changes differ from the merged #4746 only in shape (helper names, comment text); every fix site is in the merged commit. |
-| Drop | On the first upstream mlx-swift bump to a core ≥ v0.32.5 (both picks are in v0.32.5): move the URL back to `ml-explore/mlx` and take upstream's pin. |
+| Drop | On the first upstream mlx-swift bump to a core ≥ v0.32.5 (all three picks are in v0.32.5): move the URL back to `ml-explore/mlx` and take upstream's pin. |
 
 ## Fork patch disposition
 
@@ -58,6 +58,16 @@ The two #4818 cases also fail without #4818: the complex L2 norm crashes with th
 (it is not a transform), and the scatter-maximum gradient crashes once the patch is also removed
 (with the patch, the core's default stream is already a pooled one). Both pass on the new core.
 
+#4903 was added after the kit's model gates (M9) found that v0.32.4 aborts the first bf16
+full attention that selects the head-dimension-split NAX kernel (`attention_nax_dsplit`): head dim
+256 with a causal or array mask, or head dim 512 causal, at 1024 or more queries. v0.32.4's
+`jit_kernels.cpp` passes that kernel a `BV` template argument it does not declare, so on an M5
+(NAX) GPU the JIT build fails with `[metal::Device] Unable to build metal library from source`.
+Gemma 4 E4B hits it on every scene description. `AttentionSplitDTests` covers the three shapes
+against a float32 reference. With `jit_kernels.cpp` reverted to `6a3f90b29` the suite dies with
+that fatal error on an M5 Max; with #4903 all three pass. Devices without NAX take another kernel
+and only check numerics there.
+
 ## Validation
 
 Xcode 27.1 / Swift 6.4, complete strict concurrency:
@@ -70,8 +80,8 @@ and in the `.xctest` bundle's `Contents/MacOS` and `Contents/Resources`. Then
 
 | Regime | XCTest | Swift Testing |
 | --- | --- | --- |
-| default TF32 | 226 executions, 2 skipped, 0 failures | 1041 tests in 61 suites passed |
-| `MLX_ENABLE_TF32=0` | 226 executions, 2 skipped, 0 failures | 1041 tests in 61 suites passed |
+| default TF32 | 226 executions, 2 skipped, 0 failures | 1044 tests in 62 suites passed |
+| `MLX_ENABLE_TF32=0` | 226 executions, 2 skipped, 0 failures | 1044 tests in 62 suites passed |
 
 The two skips are the multi-process ring tests (`DistributedNNRingTests.testShardedLayers`,
 `DistributedRingTests.testRingCollectives`), as before. The XCTest count fell from 436 because
