@@ -424,11 +424,24 @@ template <typename T> bool all(Simd<T, 1> x) { return x.value; }
 }
 
 namespace mlx::core::simd {
+template <typename To, typename From>
+inline To bit_cast(const From& from) {
+  static_assert(sizeof(To) == sizeof(From));
+  To to;
+  __builtin_memcpy(&to, &from, sizeof(To));
+  return to;
+}
 constexpr float inf = std::numeric_limits<float>::infinity();
 template <typename T, int N>
 Simd<T, N> exp(Simd<T, N> in) {
   if constexpr (is_complex<T>) {
     return Simd<T, 1>{std::exp(in.value)};
+  } else if constexpr (std::is_same_v<T, double>) {
+    Simd<T, N> out;
+    for (int i = 0; i < N; ++i) {
+      out[i] = std::exp(in[i]);
+    }
+    return out;
   } else {
     Simd<float, N> x_init = in;
     auto x = x_init * 1.442695f;
@@ -442,8 +455,11 @@ Simd<T, N> exp(Simd<T, N> in) {
     x = fma(x, fpart, 2.402264791363012e-1f);
     x = fma(x, fpart, 6.931472028550421e-1f);
     x = fma(x, fpart, 1.000000000000000f);
-    Simd<int, N> epart = (Simd<int, N>(ipart) + 127) << 23;
-    auto result = select(isnan(x_init), x_init, (*(Simd<float, N>*)&epart) * x);
+    auto ibits = bit_cast<Simd<uint32_t, N>>(ipart + 12582912.0f);
+    constexpr uint32_t bias = 127u - 0x4B400000u;
+    Simd<uint32_t, N> epart = (ibits + bias) << 23;
+    auto result =
+        select(isnan(x_init), x_init, bit_cast<Simd<float, N>>(epart) * x);
     result = select(x_init > 88.0f, Simd<float, N>(inf), result);
     result = select(x_init < -88.0f, Simd<float, N>(0), result);
     return Simd<T, N>(result);
@@ -487,6 +503,13 @@ Simd<T, N> sincos(Simd<T, N> in) {
 }
 template <bool Sine, typename T, int N>
 Simd<T, N> sincos_checked(Simd<T, N> x) {
+  if constexpr (std::is_same_v<T, double>) {
+    Simd<T, N> out;
+    for (int i = 0; i < N; ++i) {
+      out[i] = Sine ? std::sin(x[i]) : std::cos(x[i]);
+    }
+    return out;
+  }
   Simd<float, N> xf = x;
   if (any(abs(xf) > Simd<float, N>(8388608.0f))) {
     Simd<T, N> out;
@@ -516,6 +539,13 @@ Simd<T, N> cos(Simd<T, N> x) {
 }
 template <typename T, int N>
 Simd<T, N> erf(Simd<T, N> x) {
+  if constexpr (std::is_same_v<T, double>) {
+    Simd<T, N> out;
+    for (int i = 0; i < N; ++i) {
+      out[i] = std::erf(x[i]);
+    }
+    return out;
+  }
   Simd<float, N> v = x;
   auto t = recip(fma(Simd<float, N>(0.3275911f), abs(v), 1.0f));
   auto r = fma(Simd<float, N>(1.061405429f), t, -1.453152027f);
@@ -654,13 +684,28 @@ template <int N>
 Simd<uint32_t, N> fp32_to_bits(Simd<float, N> x) {
   return *(Simd<uint32_t, N>*)(&x);
 }
+template <int N>
+Simd<float, N> narrow_round_to_odd(Simd<double, N> x) {
+  Simd<float, N> f = x;
+  Simd<double, N> back = f;
+  auto bits = fp32_to_bits(f);
+  auto needs_fix = (back != x) && ((bits & 1u) == 0u);
+  auto overshot = abs(back) > abs(x);
+  auto fixed = select(overshot, bits - 1u, bits + 1u);
+  return fp32_from_bits(select(needs_fix, fixed, bits));
+}
 struct ToFP8 {
   template <typename T, int N>
   Simd<uint8_t, N> operator()(Simd<T, N> f) {
     uint32_t fp8_max = 543 << 21;
     auto denorm_mask = Simd<uint32_t, N>(141 << 23);
     Simd<uint32_t, N> f_bits;
-    Simd<float, N> f32 = f;
+    Simd<float, N> f32;
+    if constexpr (std::is_same_v<T, double>) {
+      f32 = narrow_round_to_odd(f);
+    } else {
+      f32 = f;
+    }
     f_bits = fp32_to_bits(f32);
     Simd<uint8_t, N> result = 0u;
     auto sign = f_bits & 0x80000000;
@@ -674,7 +719,9 @@ struct ToFP8 {
     auto result_high = Simd<uint8_t, N>(f_bits_high >> 20);
     result = select(f_bits < (121 << 23), result_low, result_high);
     auto result_sat = Simd<uint8_t, N>(0x7E);
-    result = select(f_bits >= fp8_max, result_sat, result);
+    auto result_nan = Simd<uint8_t, N>(0x7F);
+    auto overflow = select(f_bits > 0x7F800000, result_nan, result_sat);
+    result = select(f_bits >= fp8_max, overflow, result);
     return result | Simd<uint8_t, N>(sign >> 24);
   }
   template <typename T>
@@ -718,8 +765,6 @@ struct LogicalOr { template <int N, typename T> Simd<T, N> operator()(Simd<T, N>
 struct BitwiseAnd { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return operator&(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct BitwiseOr { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return operator|(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct BitwiseXor { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return operator^(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
-struct LeftShift { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return operator<<(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
-struct RightShift { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return operator>>(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct Remainder { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return remainder(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct Maximum { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return maximum(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct Minimum { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return minimum(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
@@ -748,6 +793,28 @@ struct LogAddExp {
     auto mask = minval == -inf || maxval == inf;
     auto out = maxval + log1p(exp(minval - maxval));
     return select(mask, Simd<T, N>(maxval), Simd<T, N>(out));
+  }
+  template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; }
+};
+struct LeftShift {
+  template <int N, typename T>
+  Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) {
+    auto valid = y >= 0 && y < static_cast<T>(sizeof(T) * 8);
+    auto count = select(valid, y, Simd<T, N>(0));
+    return select(valid, Simd<T, N>(x << count), Simd<T, N>(0));
+  }
+  template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; }
+};
+struct RightShift {
+  template <int N, typename T>
+  Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) {
+    auto valid = y >= 0 && y < static_cast<T>(sizeof(T) * 8);
+    auto count = select(valid, y, Simd<T, N>(0));
+    auto fallback = Simd<T, N>(0);
+    if constexpr (std::is_signed_v<T>) {
+      fallback = select(x < 0, Simd<T, N>(-1), fallback);
+    }
+    return select(valid, Simd<T, N>(x >> count), fallback);
   }
   template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; }
 };

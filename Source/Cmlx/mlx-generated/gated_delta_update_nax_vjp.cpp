@@ -130,13 +130,11 @@ using Int = integral_constant<int, val>;
 // Binary Operators on Integral constants
 ///////////////////////////////////////////////////////////////////////////////
 
-#define integral_const_binop(__op__, __operator__)          \
-  template <typename T, T tv, typename U, U uv>             \
-  METAL_FUNC constexpr auto __operator__(                   \
-      integral_constant<T, tv>, integral_constant<U, uv>) { \
-    constexpr auto res = tv __op__ uv;                      \
-    using res_t = metal::remove_addrspace_t<decltype(res)>; \
-    return integral_constant<res_t, res>{};                 \
+#define integral_const_binop(__op__, __operator__)                            \
+  template <typename T, T tv, typename U, U uv>                               \
+  METAL_FUNC constexpr auto __operator__(                                     \
+      integral_constant<T, tv>, integral_constant<U, uv>) {                   \
+    return integral_constant<const decltype(tv __op__ uv), (tv __op__ uv)>{}; \
   }
 
 integral_const_binop(+, operator+);
@@ -2138,8 +2136,8 @@ template <typename InT, int Dk, int Dv, int Hk, int Hv, int C, int Ckpt>
     const device InT* q [[buffer(0)]], // [B, T, Hk, Dk]
     const device InT* k [[buffer(1)]], // [B, T, Hk, Dk]
     const device InT* v [[buffer(2)]], // [B, T, Hv, Dv]
-    const device InT* g [[buffer(3)]], // [B, T, Hv]
-    const device InT* beta [[buffer(4)]], // [B, T, Hv]
+    const device float* g [[buffer(3)]], // [B, T, Hv]
+    const device float* beta [[buffer(4)]], // [B, T, Hv]
     const device InT* cot_o [[buffer(5)]], // [B, T, Hv, Dv]
     const device float* cot_h [[buffer(6)]], // [B, Hv, Dv, Dk]
     const device float* state_cache [[buffer(7)]], // [B, Hv, n_ckpt, Dv, Dk]
@@ -2718,8 +2716,8 @@ template <typename InT, int Dk, int Dv, int Hk, int Hv, int C>
     const device InT* q [[buffer(0)]], // [B, T, Hk, Dk]
     const device InT* k [[buffer(1)]], // [B, T, Hk, Dk]
     const device InT* v [[buffer(2)]], // [B, T, Hv, Dv]
-    const device InT* g [[buffer(3)]], // [B, T, Hv]
-    const device InT* beta [[buffer(4)]], // [B, T, Hv]
+    const device float* g [[buffer(3)]], // [B, T, Hv]
+    const device float* beta [[buffer(4)]], // [B, T, Hv]
     const device InT* cot_o [[buffer(5)]], // [B, T, Hv, Dv]
     const device float* cot_h [[buffer(6)]], // [B, Hv, Dv, Dk]
     const device float* state_cache [[buffer(7)]], // [B, Hv, n_chunks, Dv, Dk]
@@ -3245,8 +3243,8 @@ template <typename InT, int Dk, int Dv, int Hk, int Hv, int C>
     const device InT* q [[buffer(0)]], // [B, T, Hk, Dk]
     const device InT* k [[buffer(1)]], // [B, T, Hk, Dk]
     const device InT* v [[buffer(2)]], // [B, T, Hv, Dv]
-    const device InT* g [[buffer(3)]], // [B, T, Hv]
-    const device InT* beta [[buffer(4)]], // [B, T, Hv]
+    const device float* g [[buffer(3)]], // [B, T, Hv]
+    const device float* beta [[buffer(4)]], // [B, T, Hv]
     const device InT* cot_o [[buffer(5)]], // [B, T, Hv, Dv]
     const device float* cot_h [[buffer(6)]], // [B, Hv, Dv, Dk]
     const device float* state_cache [[buffer(7)]], // [B, Hv, n_chunks, Dv, Dk]
@@ -3777,7 +3775,7 @@ template <typename InT, int Dk, int Dv, int Hk, int Hv, int C>
 // The kernel computes the gradient with respect to the log.
 template <typename InT, int C>
 [[kernel]] void gated_delta_dgamma_to_dg(
-    const device InT* g [[buffer(0)]],
+    const device float* g [[buffer(0)]],
     device float* dg [[buffer(1)]], // in: dL/dgamma, out: dL/dg
     constant int& T [[buffer(2)]],
     constant int& Hv [[buffer(3)]],

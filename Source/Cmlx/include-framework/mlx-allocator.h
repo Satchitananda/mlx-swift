@@ -7,6 +7,12 @@
 #include <functional>
 #include <utility>
 
+#ifndef NDEBUG
+#include <map>
+#include <shared_mutex>
+#include <vector>
+#endif
+
 #include <Cmlx/mlx-api.h>
 
 namespace mlx::core::allocator {
@@ -53,15 +59,35 @@ class MLX_API Allocator {
   };
   virtual void release(Buffer buffer) {}
 
+#ifndef NDEBUG
+  bool has_invalid_memory(const std::vector<void*>& ptrs);
+#endif
+
   Allocator() = default;
   Allocator(const Allocator& other) = delete;
   Allocator(Allocator&& other) = delete;
   Allocator& operator=(const Allocator& other) = delete;
   Allocator& operator=(Allocator&& other) = delete;
   virtual ~Allocator() = default;
+
+ protected:
+#ifndef NDEBUG
+  void track_allocation(void* data_ptr, size_t size);
+  void untrack_allocation(void* data_ptr);
+  void swap_allocation(void* data_ptr_a, void* data_ptr_b);
+#endif
+
+ private:
+#ifndef NDEBUG
+  std::map<void*, size_t> allocations_;
+  std::shared_mutex allocations_mutex_;
+#endif
 };
 
 MLX_API Allocator& allocator();
+
+// Whether the active memory is above the memory limit.
+MLX_API bool over_memory_limit();
 
 using Deleter = std::function<void(Buffer)>;
 
