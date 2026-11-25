@@ -49,15 +49,25 @@ set(MLX_BUILD_PYTHON_BINDINGS OFF)
 FetchContent_Declare(
   mlx
   GIT_REPOSITORY "https://github.com/ml-explore/mlx.git"
-  GIT_TAG "v0.32.4")
+  GIT_TAG "v0.32.5")
 FetchContent_MakeAvailable(mlx)
 
 # mlx-c
+#
+# mlx-c v0.8.0 is written against mlx v0.32.4. mlx v0.32.5 added `window_size`
+# to fast::scaled_dot_product_attention (ml-explore/mlx #4734); the patch passes
+# the core's default (-1). The SwiftPM build does the same through
+# Source/Cmlx/mlx-conditional/fast_compat.cpp. Drop both once an mlx-c release
+# builds against the pinned mlx.
 set(MLX_C_BUILD_EXAMPLES OFF)
+set(mlx_c_patch
+    ${apply_patch} -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/mlx-c.patch
+    ${apply_patch_script})
 FetchContent_Declare(
   mlx-c
   GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
-  GIT_TAG "v0.8.0")
+  GIT_TAG "v0.8.0"
+  PATCH_COMMAND ${mlx_c_patch})
 FetchContent_MakeAvailable(mlx-c)
 
 # swift-numerics

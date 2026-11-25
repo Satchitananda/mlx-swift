@@ -372,6 +372,7 @@
 				mlx/c/distributed.h,
 				mlx/c/error.h,
 				mlx/c/export.h,
+				mlx/c/fast.cpp,
 				mlx/c/fast.h,
 				mlx/c/fft.h,
 				mlx/c/graph_utils.h,

@@ -151,8 +151,13 @@ let noCudaCmlxExcludes = [
                 "mlx/mlx/backend/cuda/gemms/cublas_gemm_batched_12_0.cpp",
                 "mlx/mlx/backend/no_cpu",  // Exclude no_cpu backend on Linux, use cpu instead
                 "mlx/mlx/backend/cpu/gemms/bnns.cpp",  // macOS Accelerate version
-                "mlx-conditional",
+                // Apple-only wrappers; the portable fast_compat.cpp is built
+                "mlx-conditional/compiled_conditional.cpp",
+                "mlx-conditional/jaccl_conditional.cpp",
+                "mlx-conditional/jit_compiler_conditional.cpp",
                 "mlx-c/mlx/c/metal.cpp",
+                // built through mlx-conditional/fast_compat.cpp
+                "mlx-c/mlx/c/fast.cpp",
 
                 "mlx/mlx/backend/cuda/delayload.cpp",  // For Windows
                 "mlx/mlx/backend/cuda/wddm.cpp",
@@ -234,6 +239,10 @@ let noCudaCmlxExcludes = [
             "mlx/mlx/backend/cpu/compiled.cpp",
             "mlx/mlx/backend/cpu/jit_compiler.cpp",
             "mlx/mlx/distributed/jaccl/no_jaccl.cpp",
+
+            // mlx-c 0.8.0 does not compile against core v0.32.5 as is;
+            // mlx-conditional/fast_compat.cpp builds it with a shim
+            "mlx-c/mlx/c/fast.cpp",
 
             // opt-out of these backends (using metal)
             "mlx/mlx/backend/no_gpu",
