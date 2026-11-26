@@ -1,3 +1,94 @@
+# Upstream release sync — 2026-11-26
+
+Owner decision 2026-11-26: the fork tracks the latest upstream releases, not `main`.
+
+| Item | Pin |
+| --- | --- |
+| mlx-swift | release [`0.33.0`](https://github.com/ml-explore/mlx-swift/releases/tag/0.33.0), `7ede4fd6`. The six later commits on upstream `main` (#517, #518, #519, #522, #523, #524) are not included. |
+| Core (`Source/Cmlx/mlx`) | `https://github.com/ml-explore/mlx` tag `v0.32.5`, `cfc675e9`. It contains every fix the fork core carried (#4746, #4818, #4903), so the `Satchitananda/mlx` core is no longer used. `CMakeLists.txt` fetches the same tag. |
+| mlx-c (`Source/Cmlx/mlx-c`) | `a26f2d5` (v0.8.0), the latest mlx-c tag; no later mlx-c commit exists. Built through a shim, below. |
+
+This replaces the unmerged main-based sync (`sync/upstream-main-20261125`, recorded on that
+branch); its conflict resolutions were reused where they concern 0.33.0.
+
+## mlx-c 0.8.0 against core v0.32.5
+
+v0.32.5 added `window_size` to `fast::scaled_dot_product_attention` (ml-explore/mlx #4734) as the
+fifth parameter. mlx-c's `mlx_fast_scaled_dot_product_attention` still passes the mask mode
+there, so `mlx-c/mlx/c/fast.cpp` fails to compile (`no viable conversion from 'std::string' to
+'int'`). That is the only incompatibility: with that one call patched, the whole package builds.
+No mlx-c release, branch or open PR supports v0.32.5.
+
+`Source/Cmlx/mlx-conditional/fast_compat.cpp` declares the v0.32.4 signature, forwarding with
+`window_size = -1` (the core default, no sliding window), and then includes mlx-c's `fast.cpp`.
+`Package.swift` excludes `mlx-c/mlx/c/fast.cpp` on Apple platforms and Linux CUDA (which now
+excludes the three Apple-only `mlx-conditional` wrappers by name instead of the folder); Linux
+CPU already excluded both. The xcodeproj lists `mlx/c/fast.cpp` as a membership exception, and
+the CMake build applies the same one-line change as `cmake/mlx-c.patch`. The C API behaves as it
+did on v0.32.4. Drop all of it once an mlx-c release builds against the pinned core.
+
+## Fork patch disposition
+
+Each retained patch was removed, its guarding tests run, and the patch restored.
+
+| Patch | Disposition | Evidence |
+| --- | --- | --- |
+| Core missing-stream fixes (#4746, #4818) | Dropped: upstream in v0.32.5. | `CoreOpStreamTests` (8) pass with no fork code; the #4818 cases in `TransformStreamNumericsTests` pass. |
+| Core NAX `attention_nax_dsplit` JIT fix (#4903) | Dropped: upstream in v0.32.5. | `AttentionSplitDTests` (3) pass on an M5 Max. |
+| Nested `update(parameters:)` overrides | Dropped for upstream #510 (in 0.33.0). `Module.swift` and `ModuleTests.swift` equal 0.33.0. | Upstream's `testUpdateParametersCallsChildOverride` (override on a direct child and on a list child) covers the fork's `testNestedUpdateOverrideRuns`, which is removed. |
+| `Stream.applyDefaultsToCore()` before transforms | Retained. #4936 and #4857 do not change it. | Without the five call sites (`Transforms*.swift` then equal 0.33.0), under default TF32 and `MLX_ENABLE_TF32=0` alike: `TransformStreamNumericsTests` "second derivative" crashes with `Fatal error: There is no Stream(gpu, 1) in current thread. at …/mlx-c/mlx/c/transforms.cpp:15`; its other 8 cases pass; `TransformStreamTests` fails only its 2 core-default assertions, which test the patch itself; `CoreOpStreamTests` pass. |
+| Task-scoped `Stream()` compatibility | Retained. | With 0.33.0's `init()`/`deinit`: `StreamTests` 5 of 29 fail (`testDefaultInitializerUsesDeviceDefaultStream`, `testDefaultInitializerPreservesTaskScopedStreamAcrossSuspension`, `testDefaultStreamCopyOutlivesTaskScope`, …). |
+| Non-affine stale quantization biases (`dab691d8`) | Retained. | With 0.33.0's `Quantized.swift` and `Distributed.swift`: `QuantizationCompatibilityTests` aborts with `[quantized_matmul] Biases must be null for quantization mode 'mxfp4'`; `DistributedNNTests.testShardLinear` fails with the same error for `mxfp8`. |
+| Doc-comment and DocC link fixes | Retained unchanged. | Documentation only. |
+| Upstream #522 (`asMTLBuffer` on zero-size arrays) | Not carried yet. The owner asked to carry it as a named patch, dropped when a release contains it; the cherry-pick (test ported to 0.33.0's XCTest `MLXArrayTests`) is still to be committed. | — |
+| CI/workflow delta | Deferred, as before. `.github` equals fork `main`. | — |
+
+## Fork tests
+
+`CoreOpStreamTests`, `TransformStreamTests`, `CrossThreadEvaluation` and the stream and
+quantization additions were already on fork `main`. `TransformStreamNumericsTests` and
+`AttentionSplitDTests` come from the main-based branch. `AttentionSplitDTests` used the
+`.randomSeed` trait, which arrived with #519 after 0.33.0; it now draws its inputs from explicit
+`MLXRandom.key(seed)` keys.
+
+## Generated sources
+
+`tools/update-mlx.sh` with cmake 4.4.5 from a scratch venv (the host has no cmake).
+`tools/update-mlx-xcodeproj.sh` first follows the core's header changes: `backend/common/
+metal_kernel.h` became `custom_kernel.h`, and `utils.h` now includes the new `mlx/config.h`.
+
+| Area | Change vs 0.33.0 |
+| --- | --- |
+| `include/mlx/c` | None (same mlx-c). |
+| `include-framework` | `mlx-backend-common-metal_kernel.h` removed; `mlx-backend-common-custom_kernel.h` and `mlx-config.h` added; `Cmlx.h`, `mlx-allocator.h`, `mlx-array.h`, `mlx-backend-cuda-cuda.h`, `mlx-backend-metal-device.h`, `mlx-backend-metal-metal.h`, `mlx-backend-metal-resident.h`, `mlx-fast.h`, `mlx-io-load.h`, `mlx-ops.h`, `mlx-primitives.h`, `mlx-random.h`, `mlx-scheduler.h`, `mlx-utils.h`, `mlx-version.h` follow the core. |
+| `mlx-generated/*.cpp` (JIT) | `binary_ops`, `compiled_preamble`, `conv`, `fft`, `fp_quantized`, `fp_quantized_nax`, `gated_delta_update_nax`, `gated_delta_update_nax_vjp`, `gemm`, `gemm_nax`, `gemv`, `quantized`, `quantized_nax`, `scan`, `sort`, `steel_attention`, `steel_attention_nax`, `unary_ops`. |
+| `mlx-generated/metal` | `binary_ops.h`, `expm1f.h`, `fft/readwrite.h`, `fp8.h`, `fp_quantized.h`, `fp_quantized_nax.h`, `gated_delta_update.h`, `gated_delta_update_nax.h`, `gated_delta_update_nax_vjp.h`, `gated_delta_update_vjp.h`, `gated_delta_update_vjp.metal`, `gemv.h`, `layer_norm.metal`, `quantized.h`, `quantized_nax.h`, `scaled_dot_product_attention.metal`, `scaled_dot_product_attention_vjp.metal`, `scan.h`, `sdpa_vector.h`, `sort.h`, `steel/attn/kernels/steel_attention.h`, `steel/attn/kernels/steel_attention.metal`, `steel/attn/kernels/steel_attention_nax.h`, `steel/conv/loaders/loader_channel_l.h`, `steel/conv/loaders/loader_channel_n.h`, `steel/gemm/mma.h`, `steel/gemm/transforms.h`, `steel/utils/integral_constant.h`. No file added or removed. |
+| `mlx-generated/cuda/cuda_jit_sources.h` | The `binary_ops`, `gemm_sm70` and `qmm_sm80` arrays follow the core. The host glob order differs from upstream's (`gather`/`gather_axis`, `scatter`); the arrays keep upstream's order. |
+| `xcode/MLX.xcodeproj` | Public headers and the core folder's membership exceptions follow the files v0.32.5 added and removed. |
+
+Discarded script artefact: the `Metal.hpp` banner, which embeds the superproject HEAD.
+
+## Validation
+
+Xcode 27.1 / Swift 6.4 on an M5 Max:
+`swift build --build-system native --build-tests --jobs 8 -Xswiftc -strict-concurrency=complete`.
+A fresh `mlx.metallib` from all 14 `Source/Cmlx/mlx-generated/metal/**/*.metal` files (procedure
+as in the 2026-11-25 sync) was staged beside the test binary and in the `.xctest` bundle's
+`Contents/MacOS` and `Contents/Resources`. Then
+`swift test --build-system native --skip-build --no-parallel`:
+
+| Regime | XCTest | Swift Testing |
+| --- | --- | --- |
+| default TF32 | 454 executions, 2 skipped, 0 failures | 808 tests in 42 suites passed |
+| `MLX_ENABLE_TF32=0` | 454 executions, 2 skipped, 0 failures | 808 tests in 42 suites passed |
+
+The two skips are the multi-process ring tests (`DistributedNNRingTests.testShardedLayers`,
+`DistributedRingTests.testRingCollectives`). Counts differ from the main-based branch because
+0.33.0 predates #519's move of many suites to Swift Testing. `xcodebuild build -project
+xcode/MLX.xcodeproj -scheme MLX -destination 'platform=macOS'` also succeeds and compiles
+`fast_compat.cpp` instead of mlx-c's `fast.cpp`. The CMake build was not run; `cmake/mlx-c.patch`
+applies to mlx-c v0.8.0 (`git apply --check`). No new concurrency warnings in fork-owned code.
+
 # Upstream main sync — 2026-10-23
 
 Baseline: upstream `main` at `ce468463` ("Fix crossEntropy and nllLoss for a class axis other than
