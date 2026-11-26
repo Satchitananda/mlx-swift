@@ -59,6 +59,7 @@ for x in \
     transforms.h \
     utils.h \
     version.h \
+    config.h \
     allocator.h \
     dtype.h \
     event.h \
@@ -74,7 +75,7 @@ for x in \
     primitives.h \
     backend/metal/device.h \
     backend/metal/resident.h \
-    backend/common/metal_kernel.h \
+    backend/common/custom_kernel.h \
     backend/common/utils.h \
     backend/cpu/encoder.h \
     backend/gpu/eval.h
