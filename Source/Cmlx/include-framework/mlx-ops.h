@@ -14,13 +14,9 @@
 namespace mlx::core {
 
 /**
- * \defgroup ops Core array operations
- * @{
+ * A 1D array of numbers starting at `start` (optional), stopping at stop,
+ * stepping by `step` (optional).
  */
-
-/**
- * A 1D array of numbers starting at `start` (optional),
- * stopping at stop, stepping by `step` (optional). */
 MLX_API array arange(
     double start,
     double stop,
@@ -382,6 +378,9 @@ inline array transpose(
   return transpose(a, std::vector<int>(axes), s);
 }
 
+/** Permutes last two dimensions of an array. */
+MLX_API array matrix_transpose(const array& a, StreamOrDevice s = {});
+
 /** Swap two axes of an array. */
 MLX_API array
 swapaxes(const array& a, int axis1, int axis2, StreamOrDevice s = {});
@@ -568,8 +567,10 @@ MLX_API array allclose(
     bool equal_nan = false,
     StreamOrDevice s = {});
 
-/** Returns a boolean array where two arrays are element-wise equal within the
- * specified tolerance. */
+/**
+ * Returns a boolean array where two arrays are element-wise equal within the
+ * specified tolerance.
+ */
 MLX_API array isclose(
     const array& a,
     const array& b,
@@ -579,9 +580,9 @@ MLX_API array isclose(
     StreamOrDevice s = {});
 
 /**
- *  Reduces the input along the given axes. An output value is true
- *  if all the corresponding inputs are true.
- **/
+ * Reduces the input along the given axes. An output value is true
+ * if all the corresponding inputs are true.
+ */
 MLX_API array
 all(const array& a,
     const std::vector<int>& axes,
@@ -589,9 +590,9 @@ all(const array& a,
     StreamOrDevice s = {});
 
 /**
- *  Reduces the input along the given axis. An output value is true
- *  if all the corresponding inputs are true.
- **/
+ * Reduces the input along the given axis. An output value is true
+ * if all the corresponding inputs are true.
+ */
 MLX_API array
 all(const array& a, int axis, bool keepdims = false, StreamOrDevice s = {});
 
@@ -602,9 +603,9 @@ inline array any(const array& a, StreamOrDevice s = {}) {
 }
 
 /**
- *  Reduces the input along the given axes. An output value is true
- *  if any of the corresponding inputs are true.
- **/
+ * Reduces the input along the given axes. An output value is true
+ * if any of the corresponding inputs are true.
+ */
 MLX_API array
 any(const array& a,
     const std::vector<int>& axes,
@@ -612,9 +613,9 @@ any(const array& a,
     StreamOrDevice s = {});
 
 /**
- *  Reduces the input along the given axis. An output value is true
- *  if any of the corresponding inputs are true.
- **/
+ * Reduces the input along the given axis. An output value is true
+ * if any of the corresponding inputs are true.
+ */
 MLX_API array
 any(const array& a, int axis, bool keepdims = false, StreamOrDevice s = {});
 
@@ -690,8 +691,7 @@ inline array var(const array& a, StreamOrDevice s = {}) {
   return var(a, false, 0, to_stream(s));
 }
 
-/** Computes the variance of the elements of an array along the given
- * axes */
+/** Computes the variance of the elements of an array along the given axes. */
 MLX_API array
 var(const array& a,
     const std::vector<int>& axes,
@@ -699,8 +699,7 @@ var(const array& a,
     int ddof = 0,
     StreamOrDevice s = {});
 
-/** Computes the variance of the elements of an array along the given
- * axis */
+/** Computes the variance of the elements of an array along the given axis. */
 MLX_API array
 var(const array& a,
     int axis,
@@ -715,8 +714,10 @@ inline array std(const array& a, StreamOrDevice s = {}) {
   return std(a, false, 0, to_stream(s));
 }
 
-/** Computes the standard deviation of the elements of an array along the given
- * axes */
+/**
+ * Computes the standard deviation of the elements of an array along the given
+ * axes.
+ */
 MLX_API array
 std(const array& a,
     const std::vector<int>& axes,
@@ -724,8 +725,10 @@ std(const array& a,
     int ddof = 0,
     StreamOrDevice s = {});
 
-/** Computes the standard deviation of the elements of an array along the given
- * axis */
+/**
+ * Computes the standard deviation of the elements of an array along the given
+ * axes.
+ */
 MLX_API array
 std(const array& a,
     int axis,
@@ -783,6 +786,23 @@ min(const array& a,
 /** The minimum of the elements of an array along the given axis. */
 MLX_API array
 min(const array& a, int axis, bool keepdims = false, StreamOrDevice s = {});
+
+MLX_API std::tuple<array, array>
+minmax(const array& a, bool keepdims, StreamOrDevice s = {});
+inline std::tuple<array, array> minmax(const array& a, StreamOrDevice s = {}) {
+  return minmax(a, false, to_stream(s));
+}
+
+/** The minimum and maximum of the elements of an array along the given axes. */
+MLX_API std::tuple<array, array> minmax(
+    const array& a,
+    const std::vector<int>& axes,
+    bool keepdims = false,
+    StreamOrDevice s = {});
+
+/** The minimum and maximum of the elements of an array along the given axis. */
+MLX_API std::tuple<array, array>
+minmax(const array& a, int axis, bool keepdims = false, StreamOrDevice s = {});
 
 /** Returns the Hanning window of size M. */
 MLX_API array hanning(int M, StreamOrDevice s = {});
@@ -843,26 +863,26 @@ MLX_API array argsort(const array& a, int axis, StreamOrDevice s = {});
 /**
  * Returns a partitioned copy of the flattened array
  * such that the smaller kth elements are first.
- **/
+ */
 MLX_API array partition(const array& a, int kth, StreamOrDevice s = {});
 
 /**
  * Returns a partitioned copy of the array along a given axis
  * such that the smaller kth elements are first.
- **/
+ */
 MLX_API array
 partition(const array& a, int kth, int axis, StreamOrDevice s = {});
 
 /**
  * Returns indices that partition the flattened array
  * such that the smaller kth elements are first.
- **/
+ */
 MLX_API array argpartition(const array& a, int kth, StreamOrDevice s = {});
 
 /**
  * Returns indices that partition the array along a given axis
  * such that the smaller kth elements are first.
- **/
+ */
 MLX_API array
 argpartition(const array& a, int kth, int axis, StreamOrDevice s = {});
 
@@ -878,6 +898,27 @@ MLX_API array topk(const array& a, int k, StreamOrDevice s = {});
 
 /** Returns topk elements of the array along a given axis. */
 MLX_API array topk(const array& a, int k, int axis, StreamOrDevice s = {});
+
+/**
+ * Returns the sorted unique elements of the flattened array, and optionally
+ * the index of the first occurrence of each, the inverse indices and the
+ * counts. The output has the given size, and
+ * is truncated if ``size`` is smaller than the number of unique values.
+ * If ``size`` is larger, the result is padded with ``fill_value``, or the
+ * first of the sorted unique values if no fill value is provided. An empty
+ * input has none, so it throws unless ``size`` is zero or a fill value is
+ * given.
+ * A truncated output loses the counts of the values it drops, and its inverse
+ * indices are clamped to the last entry.
+ */
+MLX_API std::vector<array> unique(
+    const array& a,
+    int size,
+    bool return_index = false,
+    bool return_inverse = false,
+    bool return_counts = false,
+    const std::optional<array>& fill_value = std::nullopt,
+    StreamOrDevice s = {});
 
 /** Cumulative logsumexp of an array. */
 MLX_API array logcumsumexp(
@@ -1164,7 +1205,8 @@ MLX_API array scatter_add_axis(
     int axis,
     StreamOrDevice s = {});
 
-/** Scatter updates to the given indices.
+/**
+ * Scatter updates to the given indices.
  *
  * The parameters ``indices`` and ``axes`` determine the locations of ``a``
  * that are updated with the values in ``updates``. Assuming 1-d ``indices``
@@ -1627,6 +1669,7 @@ MLX_API array gather_qmm(
     std::optional<int> group_size = std::nullopt,
     std::optional<int> bits = std::nullopt,
     const std::string& mode = "affine",
+    const std::optional<array>& global_scale = std::nullopt,
     bool sorted_indices = false,
     StreamOrDevice s = {});
 
@@ -1817,8 +1860,6 @@ MLX_API array imag(const array& a, StreamOrDevice s = {});
 /* Ensure the array's underlying memory is contiguous. */
 MLX_API array
 contiguous(const array& a, bool allow_col_major = false, StreamOrDevice s = {});
-
-/** @} */
 
 } // namespace mlx::core
 #endif

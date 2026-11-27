@@ -444,7 +444,7 @@ class AsStrided : public UnaryPrimitive {
   Strides strides_;
   size_t offset_;
 
-  void eval(const std::vector<array>& inputs, array& out);
+  void eval(const array& in, array& out);
 };
 
 class BitwiseBinary : public UnaryPrimitive {
@@ -848,9 +848,11 @@ class CustomTransforms : public Primitive {
           const std::vector<int>&)> jvp,
       std::function<std::pair<std::vector<array>, std::vector<int>>(
           const std::vector<array>&,
-          const std::vector<int>&)> vmap)
+          const std::vector<int>&)> vmap,
+      bool synchronize_vjps = false)
       : Primitive(stream),
         num_outputs_(num_outputs),
+        synchronize_vjps_(synchronize_vjps),
         vjp_fun_(std::move(vjp)),
         jvp_fun_(std::move(jvp)),
         vmap_fun_(std::move(vmap)) {}
@@ -868,6 +870,7 @@ class CustomTransforms : public Primitive {
   void eval(const std::vector<array>& inputs, std::vector<array>& outputs);
 
   int num_outputs_;
+  bool synchronize_vjps_;
 
   std::function<std::vector<array>(
       const std::vector<array>&,
@@ -1080,8 +1083,13 @@ class FFT : public UnaryPrimitive {
       Stream stream,
       const std::vector<size_t>& axes,
       bool inverse,
-      bool real)
-      : UnaryPrimitive(stream), axes_(axes), inverse_(inverse), real_(real) {}
+      bool real,
+      bool odd_out = false)
+      : UnaryPrimitive(stream),
+        axes_(axes),
+        inverse_(inverse),
+        real_(real),
+        odd_out_(odd_out) {}
 
   void eval_cpu(const std::vector<array>& inputs, array& out) override;
   void eval_gpu(const std::vector<array>& inputs, array& out) override;
@@ -1092,13 +1100,16 @@ class FFT : public UnaryPrimitive {
 
   bool is_equivalent(const Primitive& other) const override;
   auto state() const {
-    return std::make_tuple(axes_, inverse_, real_);
+    return std::make_tuple(axes_, inverse_, real_, odd_out_);
   }
 
  private:
   std::vector<size_t> axes_;
   bool inverse_;
   bool real_;
+  // The output length of an inverse real transform is not recoverable from
+  // the input shape.
+  bool odd_out_;
 };
 
 class Flatten : public UnaryPrimitive {
@@ -1136,6 +1147,20 @@ class Floor : public UnaryPrimitive {
   DEFINE_VMAP()
   DEFINE_GRADS()
   DEFINE_NAME(Floor)
+  DEFINE_DEFAULT_IS_EQUIVALENT()
+  DEFINE_INPUT_OUTPUT_SHAPE()
+};
+
+class FloorDivide : public UnaryPrimitive {
+ public:
+  explicit FloorDivide(Stream stream) : UnaryPrimitive(stream) {}
+
+  void eval_cpu(const std::vector<array>& inputs, array& out) override;
+  void eval_gpu(const std::vector<array>& inputs, array& out) override;
+
+  DEFINE_VMAP()
+  DEFINE_GRADS()
+  DEFINE_NAME(FloorDivide)
   DEFINE_DEFAULT_IS_EQUIVALENT()
   DEFINE_INPUT_OUTPUT_SHAPE()
 };
@@ -1889,6 +1914,7 @@ class Scan : public UnaryPrimitive {
 
   DEFINE_VMAP()
   DEFINE_GRADS();
+  DEFINE_INPUT_OUTPUT_SHAPE()
 
   const char* name() const override {
     switch (reduce_type_) {

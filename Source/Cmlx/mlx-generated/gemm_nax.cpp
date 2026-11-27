@@ -130,13 +130,11 @@ using Int = integral_constant<int, val>;
 // Binary Operators on Integral constants
 ///////////////////////////////////////////////////////////////////////////////
 
-#define integral_const_binop(__op__, __operator__)          \
-  template <typename T, T tv, typename U, U uv>             \
-  METAL_FUNC constexpr auto __operator__(                   \
-      integral_constant<T, tv>, integral_constant<U, uv>) { \
-    constexpr auto res = tv __op__ uv;                      \
-    using res_t = metal::remove_addrspace_t<decltype(res)>; \
-    return integral_constant<res_t, res>{};                 \
+#define integral_const_binop(__op__, __operator__)                            \
+  template <typename T, T tv, typename U, U uv>                               \
+  METAL_FUNC constexpr auto __operator__(                                     \
+      integral_constant<T, tv>, integral_constant<U, uv>) {                   \
+    return integral_constant<const decltype(tv __op__ uv), (tv __op__ uv)>{}; \
   }
 
 integral_const_binop(+, operator+);
@@ -1267,7 +1265,7 @@ struct TransformAdd {
   }
 
   static METAL_FUNC OutT apply(InT x, OutT c) {
-    return static_cast<OutT>(x) + c;
+    return static_cast<OutT>(x + static_cast<InT>(c));
   }
 };
 
@@ -1285,7 +1283,8 @@ struct TransformAxpby {
 
   METAL_FUNC OutT apply(InT x, OutT c) const thread {
     return static_cast<OutT>(
-        x * static_cast<InT>(alpha) + (static_cast<OutT>(beta) * c));
+        x * static_cast<InT>(alpha) +
+        static_cast<InT>(beta) * static_cast<InT>(c));
   }
 };
 

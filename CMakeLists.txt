@@ -37,22 +37,10 @@ endif()
 set(apply_patch ${CMAKE_COMMAND} -DREPO=<SOURCE_DIR>)
 set(apply_patch_script -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-patch.cmake)
 
-# two local patches for CUDA:
-#
-# * https://github.com/ml-explore/mlx/pull/4480: leak the global command encoder
-#   map rather than synchronizing on process shutdown
-# * make ~CudaHandle non-throwing: cu::Worker is detached and holds the last
-#   reference to itself, so ~Worker -> ~CudaEvent -> cudaEventDestroy runs on
-#   the worker thread at an arbitrary point during exit, racing the CUDA
-#   runtime's own teardown. A failing destroy there terminated the process.
-set(mlx_patch
-    ${apply_patch} -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/mlx.patch
-    ${apply_patch_script})
-
 # note: this must be declared (and named `mlx`) before mlx-c is made available
-# so that our pinned/patched version wins over the one mlx-c declares. Because
-# we now pull mlx in first, we are also responsible for the option defaults that
-# mlx-c would normally set for us.
+# so that our pinned version wins over the one mlx-c declares. Because we now
+# pull mlx in first, we are also responsible for the option defaults that mlx-c
+# would normally set for us.
 set(MLX_BUILD_TESTS OFF)
 set(MLX_BUILD_EXAMPLES OFF)
 set(MLX_BUILD_BENCHMARKS OFF)
@@ -61,16 +49,25 @@ set(MLX_BUILD_PYTHON_BINDINGS OFF)
 FetchContent_Declare(
   mlx
   GIT_REPOSITORY "https://github.com/ml-explore/mlx.git"
-  GIT_TAG "v0.32.2"
-  PATCH_COMMAND ${mlx_patch})
+  GIT_TAG "v0.32.5")
 FetchContent_MakeAvailable(mlx)
 
 # mlx-c
+#
+# mlx-c v0.8.0 is written against mlx v0.32.4. mlx v0.32.5 added `window_size`
+# to fast::scaled_dot_product_attention (ml-explore/mlx #4734); the patch passes
+# the core's default (-1). The SwiftPM build does the same through
+# Source/Cmlx/mlx-conditional/fast_compat.cpp. Drop both once an mlx-c release
+# builds against the pinned mlx.
 set(MLX_C_BUILD_EXAMPLES OFF)
+set(mlx_c_patch
+    ${apply_patch} -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/mlx-c.patch
+    ${apply_patch_script})
 FetchContent_Declare(
   mlx-c
   GIT_REPOSITORY "https://github.com/ml-explore/mlx-c.git"
-  GIT_TAG "ebc88f10caa1b625e6b581437a8dea6df8a70085")
+  GIT_TAG "v0.8.0"
+  PATCH_COMMAND ${mlx_c_patch})
 FetchContent_MakeAvailable(mlx-c)
 
 # swift-numerics

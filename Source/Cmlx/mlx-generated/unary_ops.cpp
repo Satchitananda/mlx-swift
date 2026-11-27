@@ -200,6 +200,7 @@ float expm1f_scaled_unchecked(float a, float b) {
   j = j - 12582912.0f; // 0x1.8p23
   i = (int)j;
   f = fma(j, -6.93145752e-1f, a);
+  f = fma(j, -1.42860677e-6f, f);
 
   // approximate r = exp(f)-1 on interval [-log(2)/2, +log(2)/2]
   s = f * f;
@@ -330,8 +331,7 @@ struct fp8_e4m3 {
     uint32_t sign = f_bits & 0x80000000;
     f_bits ^= sign;
     if (f_bits >= fp8_max) {
-      // Default behavior saturates to min/max
-      bits = 0x7E;
+      bits = (f_bits > 0x7F800000) ? 0x7F : 0x7E;
     } else {
       if (f_bits < (121 << 23)) {
         f_bits = as_type<uint32_t>(
@@ -349,11 +349,11 @@ struct fp8_e4m3 {
   }
 
   operator float16_t() thread {
-    uint16_t v = (bits & 127) << 7;
-    half converted = as_type<half>(v);
-    converted *= 256.0;
-    auto sign = bits & 128;
-    return (sign ? -converted : converted);
+    uint16_t v = bits & 127;
+    uint16_t sign_bit = ((uint16_t)((bits >> 7) & 1)) << 15;
+    uint16_t u = (v << 7) | (((v + 1) >> 7) << 14) | sign_bit;
+    half converted = as_type<half>(u);
+    return converted * 256.0;
   }
 
   operator bfloat16_t() thread {
@@ -386,12 +386,16 @@ struct fp8_e8m0 {
   }
 
   operator bfloat16_t() thread {
-    uint16_t out = (bits == 0 ? 0x40 : (static_cast<uint16_t>(bits) << 7));
+    uint16_t out = (bits == 0)
+        ? 0x40
+        : (bits == 0xFF ? 0x7FC0 : (static_cast<uint16_t>(bits) << 7));
     return as_type<bfloat16_t>(out);
   }
 
   operator float() thread {
-    uint32_t out = (bits == 0 ? 0x400000 : (static_cast<uint16_t>(bits) << 23));
+    uint32_t out = (bits == 0)
+        ? 0x400000
+        : (bits == 0xFF ? 0x7FC00000 : (static_cast<uint16_t>(bits) << 23));
     return as_type<float>(out);
   }
 
@@ -446,7 +450,7 @@ struct Abs {
     return x;
   };
   complex64_t operator()(complex64_t x) thread {
-    return {metal::precise::sqrt(x.real * x.real + x.imag * x.imag), 0};
+    return {hypot(x.real, x.imag), 0};
   };
 };
 
@@ -719,7 +723,7 @@ struct Round {
 struct Sigmoid {
   template <typename T>
   T operator()(T x) thread {
-    auto y = 1 / (1 + metal::exp(metal::abs(x)));
+    auto y = 1 / (1 + metal::precise::exp(metal::abs(x)));
     return (x < 0) ? y : 1 - y;
   }
 };
@@ -736,8 +740,8 @@ struct Sign {
     if (x == complex64_t(0)) {
       return x;
     }
-    return x /
-        (complex64_t)metal::precise::sqrt(x.real * x.real + x.imag * x.imag);
+    auto r = hypot(x.real, x.imag);
+    return {x.real / r, x.imag / r};
   };
 };
 
@@ -789,7 +793,7 @@ struct Sqrt {
     auto b_abs = metal::precise::sqrt((r - x.real) / 2.0);
     auto b = metal::copysign(b_abs, x.imag);
     return {a, b};
-  }
+  };
 };
 
 struct Rsqrt {

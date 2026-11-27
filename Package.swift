@@ -33,6 +33,23 @@ import PackageDescription
     let cudaTargets: [Target] = []
 #endif
 
+/// Additional include roots for the CUDA build, colon-separated.
+///
+/// The CMake build fetches cudnn-frontend and CUTLASS itself, but SwiftPM has no
+/// equivalent, so `cudnn_utils.cpp` and the `quantized/qmm` kernels cannot find
+/// their headers unless the roots are supplied here.
+let extraCudaIncludePaths =
+    (Context.environment["MLX_CUDA_INCLUDE_PATHS"] ?? "")
+    .split(separator: ":")
+    .map(String.init)
+    .filter { !$0.isEmpty }
+
+/// CCCL headers used to compile device code and to JIT at runtime.
+///
+/// Defaults to the copy shipped with the CUDA toolkit. MLX pins its own CCCL
+/// version, so allow pointing at that copy instead when the two differ.
+let cudaCcclDir = Context.environment["MLX_CCCL_DIR"] ?? "/usr/local/cuda/include/cccl"
+
 let noMetalCmlxExcludes = [
     // Exclude Metal backend files, but keep no_metal.cpp for stubs
     // "mlx/mlx/backend/metal/no_metal.cpp",
@@ -41,6 +58,7 @@ let noMetalCmlxExcludes = [
     "mlx/mlx/backend/metal/compiled.cpp",
     "mlx/mlx/backend/metal/conv.cpp",
     "mlx/mlx/backend/metal/copy.cpp",
+    "mxl/mlx/backend/metal/cross_entropy.cpp",
     "mlx/mlx/backend/metal/custom_kernel.cpp",
     "mlx/mlx/backend/metal/device.cpp",
     "mlx/mlx/backend/metal/device_info.cpp",
@@ -49,6 +67,7 @@ let noMetalCmlxExcludes = [
     "mlx/mlx/backend/metal/event.cpp",
     "mlx/mlx/backend/metal/fence.cpp",
     "mlx/mlx/backend/metal/fft.cpp",
+    "mlx/mlx/backend/metal/gated_delta_update.cpp",
     "mlx/mlx/backend/metal/hadamard.cpp",
     "mlx/mlx/backend/metal/indexing.cpp",
     "mlx/mlx/backend/metal/jit_kernels.cpp",
@@ -81,6 +100,7 @@ let noCudaCmlxExcludes = [
     "mlx/mlx/backend/cuda/conv.cpp",
     "mlx/mlx/backend/cuda/cublas_utils.cpp",
     "mlx/mlx/backend/cuda/cudnn_utils.cpp",
+    "mlx/mlx/backend/cuda/cusolver_utils.cpp",
     "mlx/mlx/backend/cuda/custom_kernel.cpp",
     "mlx/mlx/backend/cuda/delayload.cpp",
     "mlx/mlx/backend/cuda/device_info.cpp",
@@ -97,6 +117,7 @@ let noCudaCmlxExcludes = [
     "mlx/mlx/backend/cuda/scaled_dot_product_attention.cpp",
     "mlx/mlx/backend/cuda/slicing.cpp",
     "mlx/mlx/backend/cuda/utils.cpp",
+    "mlx/mlx/backend/cuda/wddm.cpp",
     "mlx/mlx/backend/cuda/worker.cpp",
     "mlx/mlx/backend/cuda/binary",
     "mlx/mlx/backend/cuda/conv",
@@ -130,20 +151,27 @@ let noCudaCmlxExcludes = [
                 "mlx/mlx/backend/cuda/gemms/cublas_gemm_batched_12_0.cpp",
                 "mlx/mlx/backend/no_cpu",  // Exclude no_cpu backend on Linux, use cpu instead
                 "mlx/mlx/backend/cpu/gemms/bnns.cpp",  // macOS Accelerate version
-                "mlx-conditional",
+                // Apple-only wrappers; the portable fast_compat.cpp is built
+                "mlx-conditional/compiled_conditional.cpp",
+                "mlx-conditional/jaccl_conditional.cpp",
+                "mlx-conditional/jit_compiler_conditional.cpp",
                 "mlx-c/mlx/c/metal.cpp",
+                // built through mlx-conditional/fast_compat.cpp
+                "mlx-c/mlx/c/fast.cpp",
 
                 "mlx/mlx/backend/cuda/delayload.cpp",  // For Windows
+                "mlx/mlx/backend/cuda/wddm.cpp",
 
                 // built by the CudaBuild plugin (nvcc), not by SwiftPM
                 "mlx/mlx/backend/cuda/quantized/qmm",
             ] + noMetalCmlxExcludes
 
-        cxxSettings = [
-            .unsafeFlags(["-I/usr/local/cuda/include"]),
-            .unsafeFlags(["-I/usr/local/cuda/include/cccl"]),
-            .define("MLX_CCCL_DIR", to: "\"/usr/local/cuda/include/cccl\""),
-        ]
+        cxxSettings =
+            [
+                .unsafeFlags(["-I/usr/local/cuda/include"]),
+                .unsafeFlags(["-I\(cudaCcclDir)"]),
+                .define("MLX_CCCL_DIR", to: "\"\(cudaCcclDir)\""),
+            ] + extraCudaIncludePaths.map { .unsafeFlags(["-I\($0)"]) }
 
         linkerSettings = [
             .linkedLibrary("gfortran", .when(platforms: [.linux])),
@@ -152,6 +180,7 @@ let noCudaCmlxExcludes = [
             .linkedLibrary("openblas", .when(platforms: [.linux])),
             .unsafeFlags(["-L/usr/local/cuda/lib64"]),
             .unsafeFlags(["-L/usr/local/cuda/lib64/stubs"]),
+            .linkedLibrary("cusolver"),
             .linkedLibrary("cudnn"),
             .linkedLibrary("cublas"),
             .linkedLibrary("cublasLt"),
@@ -210,6 +239,10 @@ let noCudaCmlxExcludes = [
             "mlx/mlx/backend/cpu/compiled.cpp",
             "mlx/mlx/backend/cpu/jit_compiler.cpp",
             "mlx/mlx/distributed/jaccl/no_jaccl.cpp",
+
+            // mlx-c 0.8.0 does not compile against core v0.32.5 as is;
+            // mlx-conditional/fast_compat.cpp builds it with a shim
+            "mlx-c/mlx/c/fast.cpp",
 
             // opt-out of these backends (using metal)
             "mlx/mlx/backend/no_gpu",

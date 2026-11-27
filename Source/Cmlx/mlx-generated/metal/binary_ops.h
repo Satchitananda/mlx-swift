@@ -261,7 +261,7 @@ struct Power {
       return {0.0, 0.0};
     }
     auto x_theta = metal::atan2(x.imag, x.real);
-    auto x_ln_r = 0.5 * metal::log(x.real * x.real + x.imag * x.imag);
+    auto x_ln_r = metal::log(hypot(x.real, x.imag));
     auto mag = metal::exp(y.real * x_ln_r - y.imag * x_theta);
     auto phase = y.imag * x_ln_r + y.real * x_theta;
     return {mag * metal::cos(phase), mag * metal::sin(phase)};
@@ -313,14 +313,16 @@ struct BitwiseXor {
 struct LeftShift {
   template <typename T>
   T operator()(T x, T y) thread {
-    return x << y;
+    auto valid = y >= 0 && y < static_cast<T>(sizeof(T) * 8);
+    return valid ? x << y : T(0);
   };
 };
 
 struct RightShift {
   template <typename T>
   T operator()(T x, T y) thread {
-    return x >> y;
+    auto valid = y >= 0 && y < static_cast<T>(sizeof(T) * 8);
+    return valid ? x >> y : (x < 0) ? T(-1) : T(0);
   };
 };
 

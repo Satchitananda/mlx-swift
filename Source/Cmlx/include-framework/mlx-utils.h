@@ -8,10 +8,12 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 #include <variant>
 
 #include <Cmlx/mlx-api.h>
 #include <Cmlx/mlx-array.h>
+#include <Cmlx/mlx-config.h>
 #include <Cmlx/mlx-device.h>
 #include <Cmlx/mlx-dtype.h>
 #include <Cmlx/mlx-stream.h>
@@ -29,7 +31,9 @@ MLX_API Stream to_stream(StreamOrDevice s, Device default_);
 
 struct StreamContext {
  public:
-  StreamContext(StreamOrDevice s) : _stream(default_stream(default_device())) {
+  StreamContext(StreamOrDevice s)
+      : _stream(default_stream(default_device())),
+        _owner(std::this_thread::get_id()) {
     if (std::holds_alternative<std::monostate>(s)) {
       throw std::runtime_error(
           "[StreamContext] Invalid argument, please specify a stream or device.");
@@ -39,13 +43,21 @@ struct StreamContext {
     set_default_stream(_s);
   }
 
-  ~StreamContext() {
+  // noexcept(false) so the thread check below can throw. A destructor that
+  // throws while another exception unwinds this thread calls std::terminate.
+  ~StreamContext() noexcept(false) {
+    if (std::this_thread::get_id() != _owner) {
+      throw std::runtime_error(
+          "[StreamContext] Destroyed in a different thread than it was "
+          "constructed in.");
+    }
     set_default_device(_stream.device);
     set_default_stream(_stream);
   }
 
  private:
   Stream _stream;
+  std::thread::id _owner;
 };
 
 struct MLX_API PrintOptions {
@@ -74,7 +86,8 @@ MLX_API void set_printoptions(PrintOptions options);
 
 MLX_API PrintFormatter& get_global_formatter();
 
-/** Return whether current thread is the first one that called this function. */
+/** Check for the process main thread on Apple platforms and Linux.
+ * Elsewhere, compare with the thread ID from the first call. */
 bool is_main_thread();
 
 /** Holds information about floating-point types. */
@@ -92,6 +105,7 @@ struct MLX_API finfo {
 struct MLX_API iinfo {
   explicit iinfo(Dtype dtype);
   Dtype dtype;
+  int bits;
   int64_t min;
   uint64_t max;
 };
@@ -172,59 +186,16 @@ inline int next_power_of_2(int n) {
 
 namespace env {
 
-int get_var(const char* name, int default_value);
-std::string get_var(const char* name, const char* default_value);
-
-inline int bfs_max_width() {
-  static int bfs_max_width_ = get_var("MLX_BFS_MAX_WIDTH", 20);
-  return bfs_max_width_;
-}
-
 inline int max_ops_per_buffer(int default_value) {
-  static int max_ops_per_buffer_ =
-      get_var("MLX_MAX_OPS_PER_BUFFER", default_value);
-  return max_ops_per_buffer_;
+  return config::get("MLX_MAX_OPS_PER_BUFFER", default_value);
 }
 
 inline int max_mb_per_buffer(int default_value) {
-  static int max_mb_per_buffer_ =
-      get_var("MLX_MAX_MB_PER_BUFFER", default_value);
-  return max_mb_per_buffer_;
-}
-
-// Per-set residency-set size, as a percentage of the device's recommended
-// max working-set size. Controls only how wired memory is distributed across
-// residency sets, never how much is wired; see metal::ResidencySets. A value
-// <= 0 or >= 100 puts everything in a single set.
-inline int residency_set_max_pct() {
-  static int residency_set_max_pct_ = get_var("MLX_RESIDENCY_SET_MAX_PCT", 5);
-  return residency_set_max_pct_;
-}
-
-// Log each residency set as it is created.
-inline bool residency_debug() {
-  static bool residency_debug_ = get_var("MLX_RESIDENCY_DEBUG", 0);
-  return residency_debug_;
-}
-
-inline bool metal_fast_synch() {
-  static bool metal_fast_synch = get_var("MLX_METAL_FAST_SYNCH", 0);
-  return metal_fast_synch;
+  return config::get("MLX_MAX_MB_PER_BUFFER", default_value);
 }
 
 inline bool enable_tf32() {
-  static bool enable_tf32_ = get_var("MLX_ENABLE_TF32", 1);
-  return enable_tf32_;
-}
-
-inline int nccl_timeout(int default_value) {
-  static int nccl_timeout = get_var("MLX_NCCL_TIMEOUT", default_value);
-  return nccl_timeout;
-}
-
-inline const std::string& metal_gpu_arch() {
-  static std::string gpu_arch_ = get_var("MLX_METAL_GPU_ARCH", "");
-  return gpu_arch_;
+  return config::get("MLX_ENABLE_TF32", 1);
 }
 
 } // namespace env

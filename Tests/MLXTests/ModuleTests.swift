@@ -444,6 +444,40 @@ class ModuleTests: XCTestCase {
         XCTAssertEqual(collect["interior2.children.1"], "Linear")
     }
 
+    func testUpdateParametersCallsChildOverride() throws {
+        // a child's update(parameters:verify:path:modulePath:) override runs
+        // when the update starts at an ancestor
+        class RecordingLinear: Linear {
+            var updateCount = 0
+
+            override func update(
+                parameters: ModuleParameters, verify: VerifyUpdate, path: [String] = [],
+                modulePath: [String] = []
+            ) throws -> Self {
+                updateCount += 1
+                return try super.update(
+                    parameters: parameters, verify: verify, path: path, modulePath: modulePath)
+            }
+        }
+
+        class Parent: Module {
+            let child = RecordingLinear(2, 2)
+            let list = [RecordingLinear(2, 2)]
+        }
+
+        let m = Parent()
+        let weight = MLXArray.ones([2, 2])
+        m.update(
+            parameters: .unflattened([
+                "child.weight": weight, "list.0.weight": weight,
+            ]))
+
+        XCTAssertEqual(m.child.updateCount, 1)
+        XCTAssertEqual(m.list[0].updateCount, 1)
+        assertEqual(m.child.weight, weight)
+        assertEqual(m.list[0].weight, weight)
+    }
+
     func testUpdateModuleSameType() throws {
         // set a single module with same type
         let m = newStructureModule()
@@ -974,37 +1008,5 @@ class ModuleTests: XCTestCase {
         // https://github.com/ml-explore/mlx-swift/issues/317
         // Unable to get @ModuleInfo for Sequential.layers -- must be wrapped to receive updates
         quantize(model: s)
-    }
-}
-
-extension ModuleTests {
-
-    /// A nested module's `update(parameters:verify:path:modulePath:)` override
-    /// must run when the update starts at an ancestor. Layers use that override
-    /// to drop caches derived from the replaced parameters.
-    func testNestedUpdateOverrideRuns() throws {
-        final class CountingChild: Module {
-            let weight = MLXArray([Float(1)])
-            var updates = 0
-
-            override func update(
-                parameters: ModuleParameters, verify: VerifyUpdate,
-                path: [String] = [], modulePath: [String] = []
-            ) throws -> Self {
-                updates += 1
-                return try super.update(
-                    parameters: parameters, verify: verify, path: path, modulePath: modulePath)
-            }
-        }
-        final class Parent: Module {
-            @ModuleInfo var child = CountingChild()
-        }
-
-        let parent = Parent()
-        parent.update(
-            parameters: ModuleParameters.unflattened(["child.weight": MLXArray([Float(2)])]))
-
-        XCTAssertEqual(parent.child.updates, 1, "the child's update override did not run")
-        XCTAssertEqual(parent.child.weight.item(Float.self), 2)
     }
 }
