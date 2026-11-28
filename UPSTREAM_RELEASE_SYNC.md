@@ -4,7 +4,7 @@ Owner decision 2026-11-26: the fork tracks the latest upstream releases, not `ma
 
 | Item | Pin |
 | --- | --- |
-| mlx-swift | release [`0.33.0`](https://github.com/ml-explore/mlx-swift/releases/tag/0.33.0), `7ede4fd6`. The six later commits on upstream `main` (#517, #518, #519, #522, #523, #524) are not included. |
+| mlx-swift | release [`0.33.0`](https://github.com/ml-explore/mlx-swift/releases/tag/0.33.0), `7ede4fd6`. Of the six later commits on upstream `main` (#517, #518, #519, #522, #523, #524), only #522 is carried (below). |
 | Core (`Source/Cmlx/mlx`) | `https://github.com/ml-explore/mlx` tag `v0.32.5`, `cfc675e9`. It contains every fix the fork core carried (#4746, #4818, #4903), so the `Satchitananda/mlx` core is no longer used. `CMakeLists.txt` fetches the same tag. |
 | mlx-c (`Source/Cmlx/mlx-c`) | `a26f2d5` (v0.8.0), the latest mlx-c tag; no later mlx-c commit exists. Built through a shim, below. |
 
@@ -40,7 +40,7 @@ Each retained patch was removed, its guarding tests run, and the patch restored.
 | Task-scoped `Stream()` compatibility | Retained. | With 0.33.0's `init()`/`deinit`: `StreamTests` 5 of 29 fail (`testDefaultInitializerUsesDeviceDefaultStream`, `testDefaultInitializerPreservesTaskScopedStreamAcrossSuspension`, `testDefaultStreamCopyOutlivesTaskScope`, …). |
 | Non-affine stale quantization biases (`dab691d8`) | Retained. | With 0.33.0's `Quantized.swift` and `Distributed.swift`: `QuantizationCompatibilityTests` aborts with `[quantized_matmul] Biases must be null for quantization mode 'mxfp4'`; `DistributedNNTests.testShardLinear` fails with the same error for `mxfp8`. |
 | Doc-comment and DocC link fixes | Retained unchanged. | Documentation only. |
-| Upstream #522 (`asMTLBuffer` on zero-size arrays) | Not carried yet. The owner asked to carry it as a named patch, dropped when a release contains it; the cherry-pick (test ported to 0.33.0's XCTest `MLXArrayTests`) is still to be committed. | — |
+| Upstream #522 (`asMTLBuffer` on zero-size arrays) | Carried as a named patch (`cherry-pick -x` of `00afc1dd`), dropped when a release contains it. Upstream's test is Swift Testing; 0.33.0's `MLXArrayTests` is XCTest, so the test is ported as `testAsMTLBufferEmpty`. It passes with the fix and crashes without it (`MLXArray+Metal.swift:27`, nil unwrap). | `testAsMTLBufferEmpty` |
 | CI/workflow delta | Deferred, as before. `.github` equals fork `main`. | — |
 
 ## Fork tests
