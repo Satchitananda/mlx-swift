@@ -155,6 +155,7 @@ let noCudaCmlxExcludes = [
                 "mlx-conditional/compiled_conditional.cpp",
                 "mlx-conditional/jaccl_conditional.cpp",
                 "mlx-conditional/jit_compiler_conditional.cpp",
+                "mlx-conditional/quantized_conditional.cpp",
                 "mlx-c/mlx/c/metal.cpp",
                 // built through mlx-conditional/fast_compat.cpp
                 "mlx-c/mlx/c/fast.cpp",
@@ -239,6 +240,10 @@ let noCudaCmlxExcludes = [
             "mlx/mlx/backend/cpu/compiled.cpp",
             "mlx/mlx/backend/cpu/jit_compiler.cpp",
             "mlx/mlx/distributed/jaccl/no_jaccl.cpp",
+
+            // core v0.32.5's float64 FP8 path does not compile below iOS 18;
+            // mlx-conditional/quantized_conditional.cpp builds it with a guard
+            "mlx/mlx/backend/cpu/quantized.cpp",
 
             // mlx-c 0.8.0 does not compile against core v0.32.5 as is;
             // mlx-conditional/fast_compat.cpp builds it with a shim
