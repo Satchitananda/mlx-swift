@@ -680,6 +680,7 @@
 				mlx/backend/cpu/lapack.h,
 				mlx/backend/cpu/make_compiled_preamble.ps1,
 				mlx/backend/cpu/make_compiled_preamble.sh,
+				mlx/backend/cpu/quantized.cpp,
 				mlx/backend/cpu/simd/accelerate_fp16_simd.h,
 				mlx/backend/cpu/simd/accelerate_simd.h,
 				mlx/backend/cpu/simd/base_simd.h,
